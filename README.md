@@ -2,6 +2,25 @@
 
 双项目：Go 后端 REST API + Next.js 前端瀑布流展示。用于捕获 X/Twitter 和小红书帖子，自动下载媒体文件。
 
+瀑布流：
+
+![alt text](docs/aca5068742a821002aa71f6c326c5b8a.jpg)
+
+大图预览：
+
+![alt text](docs/95ec1f73b54a2633730b135f2ae84f88.jpg)
+
+手机端：
+![alt text](docs/605387311dabcc7a415499ba41369250.jpg)
+![alt text](docs/c91f32a663892fa4d1d61fa179f2105f.jpg)
+
+## 结合Agent使用步骤
+
+1. 先配置TG的话题，使用[social-capture skill](https://github.com/chajiuqqq/social-capture)让Agent抓取帖子元数据并推送到该项目后端保存
+![alt text](docs/fc39d5dfe80b60f3387af9178f2a7d3a.jpg)
+
+2. 分享x/小红书链接到TG的这个话题，Agent会自动执行抓取
+
 ## 启动
 
 ```bash
