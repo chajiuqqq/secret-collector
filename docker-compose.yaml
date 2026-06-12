@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: capture
       POSTGRES_DB: capture
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./pg_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U capture -d capture"]
       interval: 5s
@@ -43,5 +43,3 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-volumes:
-  pgdata:
