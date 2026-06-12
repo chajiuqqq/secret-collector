@@ -1,0 +1,7 @@
+.git
+/tmp
+/media
+*.log
+.env
+.env.local
+__debug_bin
