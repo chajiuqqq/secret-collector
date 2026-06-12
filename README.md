@@ -1,9 +1,9 @@
 # 私密收藏夹
 
-双项目：Go 后端 REST API + Next.js 前端瀑布流展示。用于捕获 X/Twitter 和小红书帖子，自动下载媒体文件。
+双项目：Go 后端 REST API + Next.js 前端瀑布流展示。用于捕获 X/Twitter 和小红书帖子(无需任何API配置)，自动下载媒体文件。
 
 瀑布流：
-
+API
 ![alt text](docs/aca5068742a821002aa71f6c326c5b8a.jpg)
 
 大图预览：
