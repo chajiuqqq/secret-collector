@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PostItem } from "@/lib/types";
 import { fetchPosts, deletePost } from "@/lib/api";
 import PostCard from "./post-card";
@@ -26,20 +26,33 @@ export default function PostFeed({
   } | null>(null);
 
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const activeTagRef = useRef<string | null>(null);
 
-  const filteredPosts = useMemo(() => {
-    if (!activeTag) return posts;
-    if (activeTag === "x" || activeTag === "xiaohongshu" || activeTag === "tg") {
-      return posts.filter((p) => p.platform === activeTag);
-    }
-    return posts.filter((p) => p.content.includes(activeTag));
-  }, [posts, activeTag]);
+  const handleTagChange = useCallback((tag: string | null) => {
+    setActiveTag(tag);
+    activeTagRef.current = tag;
+    // Fetch fresh with tag filter from backend
+    const load = async () => {
+      setLoading(true);
+      try {
+        const data = await fetchPosts(20, undefined, tag ?? undefined);
+        if (tag === activeTagRef.current) {
+          setPosts(data.posts);
+          cursorRef.current = data.next_cursor;
+          setHasMore(data.next_cursor !== null);
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
 
   const loadMore = useCallback(async () => {
     if (loading || !hasMore) return;
     setLoading(true);
     try {
-      const data = await fetchPosts(20, cursorRef.current ?? undefined);
+      const data = await fetchPosts(20, cursorRef.current ?? undefined, activeTagRef.current ?? undefined);
       setPosts((p) => [...p, ...data.posts]);
       cursorRef.current = data.next_cursor;
       if (!data.next_cursor) setHasMore(false);
@@ -75,9 +88,9 @@ export default function PostFeed({
 
   return (
     <>
-      <TagBar activeTag={activeTag} onTagChange={setActiveTag} />
+      <TagBar activeTag={activeTag} onTagChange={handleTagChange} />
       <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4 p-4">
-        {filteredPosts.map((post) => (
+        {posts.map((post) => (
           <div key={post.id} className="break-inside-avoid mb-4">
             <PostCard
               post={post}
@@ -94,12 +107,12 @@ export default function PostFeed({
           ))}
       </div>
       <div ref={sentinel} className="h-1" />
-      {filteredPosts.length === 0 && posts.length > 0 && (
+      {posts.length === 0 && !loading && (
         <p className="text-center text-muted-foreground py-8 text-sm">
           没有匹配的帖子
         </p>
       )}
-      {!hasMore && filteredPosts.length > 0 && (
+      {!hasMore && posts.length > 0 && (
         <p className="text-center text-muted-foreground py-8 text-sm">
           没有更多了
         </p>

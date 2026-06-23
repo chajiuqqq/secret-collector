@@ -138,22 +138,37 @@ func DecodeCursor(cursor string) (time.Time, int64, error) {
 	return time.Unix(0, ns), id, nil
 }
 
-func (s *Store) ListPosts(ctx context.Context, limit int, cursor string) ([]Post, string, error) {
+
+func (s *Store) ListPosts(ctx context.Context, limit int, cursor, tag string) ([]Post, string, error) {
 	query := `
 		SELECT id, platform, original_url, author_name, author_avatar_url,
 		       avatar_media_id, content, blurred, posted_at, captured_at
 		FROM posts
 		WHERE deleted_at IS NULL`
 	args := []any{}
+	n := 0
+	if tag != "" {
+		n++
+		if tag == "x" || tag == "xiaohongshu" || tag == "tg" {
+			query += fmt.Sprintf(` AND platform = $%d`, n)
+		} else {
+			query += fmt.Sprintf(` AND content LIKE '%%' || $%d || '%%'`, n)
+		}
+		args = append(args, tag)
+	}
 	if cursor != "" {
 		capturedAt, id, err := DecodeCursor(cursor)
 		if err != nil {
 			return nil, "", err
 		}
-		query += ` AND (captured_at, id) < ($1, $2)`
+		n++
+		query += fmt.Sprintf(` AND (captured_at, id) < ($%d, $%d)`, n, n+1)
 		args = append(args, capturedAt, id)
+		n++
 	}
-	query += fmt.Sprintf(` ORDER BY captured_at DESC, id DESC LIMIT %d`, limit+1)
+	n++
+	query += fmt.Sprintf(` ORDER BY captured_at DESC, id DESC LIMIT $%d`, n)
+	args = append(args, limit+1)
 
 	rows, err := s.Pool.Query(ctx, query, args...)
 	if err != nil {

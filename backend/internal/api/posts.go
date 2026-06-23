@@ -65,6 +65,7 @@ func (h *Handler) CreatePost(c *gin.Context) {
 func (h *Handler) ListPosts(c *gin.Context) {
 	var q struct {
 		Limit  int    `form:"limit"`
+		Tag    string `form:"tag"`
 		Cursor string `form:"cursor"`
 	}
 	if err := c.ShouldBindQuery(&q); err != nil {
@@ -75,7 +76,7 @@ func (h *Handler) ListPosts(c *gin.Context) {
 		q.Limit = defaultLimit
 	}
 
-	posts, nextCursor, err := h.Store.ListPosts(c.Request.Context(), q.Limit, q.Cursor)
+	posts, nextCursor, err := h.Store.ListPosts(c.Request.Context(), q.Limit, q.Cursor, q.Tag)
 	if err != nil {
 		slog.Error("list posts", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list posts"})

@@ -17,9 +17,11 @@ function apiPath(path: string): string {
 export async function fetchPosts(
   limit = 20,
   cursor?: string,
+  tag?: string,
 ): Promise<ListPostsResponse> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (cursor) params.set("cursor", cursor);
+  if (tag) params.set("tag", tag);
   const res = await fetch(apiPath(`/api/posts?${params}`), {
     cache: "no-store",
   });
