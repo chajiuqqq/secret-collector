@@ -19,6 +19,7 @@ export interface PostItem {
   content: string;
   posted_at: string | null;
   captured_at: string;
+  blurred: boolean;
   media: MediaItem[];
 }
 
@@ -48,4 +49,9 @@ export interface TgScanProgress {
   media_missing: number;
   posts_written: number;
   posts_skipped: number;
+}
+
+export interface TagItem {
+  name: string;
+  post_count: number;
 }

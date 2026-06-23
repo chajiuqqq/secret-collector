@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
-import type { PostItem } from "@/lib/types";
+import { useEffect, useState } from "react";
+import { fetchTags } from "@/lib/api";
+import type { TagItem } from "@/lib/types";
 
 interface Props {
-  posts: PostItem[];
   activeTag: string | null;
   onTagChange: (tag: string | null) => void;
 }
@@ -15,26 +15,15 @@ const platformLabels: Record<string, string> = {
   tg: "TG",
 };
 
-function extractHashtags(content: string): string[] {
-  const matches = content.match(/#[\w一-鿿]+/g);
-  return matches ? [...new Set(matches)] : [];
-}
+export default function TagBar({ activeTag, onTagChange }: Props) {
+  const [tags, setTags] = useState<TagItem[]>([]);
 
-export default function TagBar({ posts, activeTag, onTagChange }: Props) {
-  const tags = useMemo(() => {
-    const platformSet = new Set<string>();
-    const hashtagSet = new Set<string>();
-    for (const p of posts) {
-      platformSet.add(p.platform);
-      for (const tag of extractHashtags(p.content)) {
-        hashtagSet.add(tag);
-      }
-    }
-    return {
-      platforms: Array.from(platformSet),
-      hashtags: Array.from(hashtagSet).sort(),
-    };
-  }, [posts]);
+  useEffect(() => {
+    fetchTags().then(setTags).catch(() => {});
+  }, []);
+
+  const platforms = tags.filter((t) => platformLabels[t.name]);
+  const hashtags = tags.filter((t) => t.name.startsWith("#"));
 
   return (
     <div className="flex items-center gap-2 px-4 py-2 overflow-x-auto border-b">
@@ -48,33 +37,35 @@ export default function TagBar({ posts, activeTag, onTagChange }: Props) {
       >
         全部
       </button>
-      {tags.platforms.map((p) => (
+      {platforms.map((t) => (
         <button
-          key={p}
-          onClick={() => onTagChange(p)}
+          key={t.name}
+          onClick={() => onTagChange(t.name)}
           className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-            activeTag === p
+            activeTag === t.name
               ? "bg-primary text-primary-foreground"
               : "bg-muted text-muted-foreground hover:bg-muted/80"
           }`}
         >
-          {platformLabels[p] ?? p}
+          {platformLabels[t.name] ?? t.name}
+          <span className="ml-1 text-[10px] opacity-60">{t.post_count}</span>
         </button>
       ))}
-      {tags.hashtags.length > 0 && (
+      {hashtags.length > 0 && (
         <span className="w-px h-4 bg-border shrink-0" />
       )}
-      {tags.hashtags.map((tag) => (
+      {hashtags.map((t) => (
         <button
-          key={tag}
-          onClick={() => onTagChange(tag)}
+          key={t.name}
+          onClick={() => onTagChange(t.name)}
           className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-            activeTag === tag
+            activeTag === t.name
               ? "bg-primary text-primary-foreground"
               : "bg-muted text-muted-foreground hover:bg-muted/80"
           }`}
         >
-          {tag}
+          {t.name}
+          <span className="ml-1 text-[10px] opacity-60">{t.post_count}</span>
         </button>
       ))}
     </div>

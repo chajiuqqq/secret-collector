@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -122,6 +123,7 @@ func (h *Handler) ListPosts(c *gin.Context) {
 			AuthorAvatarURL: avatarURL,
 			Content:         p.Content,
 			PostedAt:        p.PostedAt,
+			Blurred:         p.Blurred,
 			CapturedAt:      p.CapturedAt,
 			Media:           media,
 		}
@@ -140,7 +142,7 @@ func (h *Handler) DeletePost(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
 	}
-	ok, err := h.Store.SoftDeletePost(c.Request.Context(), id)
+	ok, platform, content, err := h.Store.SoftDeletePost(c.Request.Context(), id)
 	if err != nil {
 		slog.Error("soft delete", "id", id, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
@@ -150,5 +152,11 @@ func (h *Handler) DeletePost(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
+		// Decrement tags in background (best-effort)
+		go func() {
+			if err := h.Store.DecrementPostTags(context.Background(), platform, content); err != nil {
+				slog.Error("decrement tags", "id", id, "error", err)
+			}
+		}()
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }

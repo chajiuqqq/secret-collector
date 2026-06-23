@@ -22,6 +22,7 @@ func SetupRouter(h *Handler, cfg *config.Config) *gin.Engine {
 		api.DELETE("/posts/:id", h.DeletePost)
 		api.POST("/tg/scan", h.TgScan)
 		api.GET("/tg/scan/progress", h.TgScanProgress)
+		api.GET("/tags", h.ListTags)
 	}
 
 	r.GET("/healthz", func(c *gin.Context) {

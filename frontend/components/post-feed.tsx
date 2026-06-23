@@ -75,7 +75,7 @@ export default function PostFeed({
 
   return (
     <>
-      <TagBar posts={posts} activeTag={activeTag} onTagChange={setActiveTag} />
+      <TagBar activeTag={activeTag} onTagChange={setActiveTag} />
       <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4 p-4">
         {filteredPosts.map((post) => (
           <div key={post.id} className="break-inside-avoid mb-4">

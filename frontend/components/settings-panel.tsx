@@ -55,7 +55,6 @@ export default function SettingsPanel() {
         (p) => setProgress(p),
         (r: TgScanResponse) => {
           setScanning(false);
-          setProgress(null);
           setResult({
             type: "success",
             message: `创建 ${r.posts_created} 条帖子，跳过 ${r.posts_skipped} 条，找到 ${r.media_found} 个媒体，缺失 ${r.media_missing} 个`,
@@ -147,7 +146,7 @@ export default function SettingsPanel() {
                 {scanning ? "扫描中..." : "扫描录入"}
               </button>
 
-              {scanning && progress && (
+              {(scanning || result) && progress && (
                 <div className="mb-3">
                   <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
                     <span>{phaseLabels[progress.phase] ?? progress.phase}</span>

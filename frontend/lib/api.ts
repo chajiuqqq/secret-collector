@@ -1,4 +1,4 @@
-import type { ListPostsResponse, TgScanProgress, TgScanResponse } from "./types";
+import type { ListPostsResponse, TagItem, TgScanProgress, TgScanResponse } from "./types";
 
 const BACKEND_URL =
   typeof window === "undefined"
@@ -87,4 +87,10 @@ export function watchScanProgress(
   });
 
   return () => es.close();
+}
+
+export async function fetchTags(): Promise<TagItem[]> {
+  const res = await fetch(apiPath("/api/tags"), { cache: "no-store" });
+  if (!res.ok) return [];
+  return res.json();
 }

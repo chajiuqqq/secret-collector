@@ -45,6 +45,7 @@ type PostResponse struct {
 	Content         string          `json:"content"`
 	PostedAt        *time.Time      `json:"posted_at"`
 	CapturedAt      time.Time       `json:"captured_at"`
+	Blurred         bool            `json:"blurred"`
 	Media           []MediaResponse `json:"media"`
 }
 
