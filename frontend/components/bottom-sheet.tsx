@@ -108,6 +108,16 @@ export default function BottomSheet({ open, onClose, children }: Props) {
           }}
           className="z-50 bg-card border rounded-2xl shadow-2xl p-4 overflow-y-auto animate-fade-in"
         >
+          <button
+            onClick={onClose}
+            aria-label="关闭"
+            className="absolute top-2 right-2 inline-flex items-center justify-center w-8 h-8 rounded-full hover:bg-accent text-muted-foreground"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
           {children}
         </div>
       </>
@@ -120,6 +130,16 @@ export default function BottomSheet({ open, onClose, children }: Props) {
       ref={sheetRef}
       className="absolute right-0 top-full mt-2 w-96 bg-card border rounded-xl shadow-lg p-4 z-50"
     >
+      <button
+        onClick={onClose}
+        aria-label="关闭"
+        className="absolute top-2 right-2 inline-flex items-center justify-center w-7 h-7 rounded-full hover:bg-accent text-muted-foreground"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
       {children}
     </div>
   );
