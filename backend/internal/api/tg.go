@@ -205,6 +205,10 @@ func (h *Handler) runScan(task *tgScanTask, req TgScanRequest) {
 			}
 		}
 
+		if len(medias) == 0 {
+			continue
+		}
+
 		tgPosts = append(tgPosts, store.TgPost{
 			ChatID:     export.ID,
 			Date:       g.date,
