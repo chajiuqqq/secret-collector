@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { startTgScan, watchScanProgress } from "@/lib/api";
+import { useNSFW } from "./nsfw-context";
 import type { TgScanProgress, TgScanResponse } from "@/lib/types";
 
 const scanModes = [
@@ -17,6 +18,7 @@ const phaseLabels: Record<string, string> = {
 
 export default function SettingsPanel() {
   const [open, setOpen] = useState(false);
+  const { nsfw, setNsfw } = useNSFW();
   const [scanMode, setScanMode] = useState("index");
   const [indexPath, setIndexPath] = useState(
     "/vol2/@apphome/trim.openclaw/data/workspace/tg-saved-full.json"
@@ -101,6 +103,25 @@ export default function SettingsPanel() {
       {open && (
         <div className="absolute right-0 top-full mt-2 w-80 bg-card border rounded-xl shadow-lg p-4 z-50">
           <h3 className="font-medium text-sm mb-3">TG 扫描设置</h3>
+
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm">NSFW 模式</span>
+            <button
+              onClick={() => setNsfw(!nsfw)}
+              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+                nsfw ? "bg-red-500" : "bg-muted"
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                  nsfw ? "translate-x-4" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground mb-3 -mt-2">
+            开启后所有帖子不再模糊
+          </p>
 
           <div className="flex gap-1 mb-3">
             {scanModes.map((m) => (

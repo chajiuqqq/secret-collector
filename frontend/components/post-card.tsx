@@ -1,4 +1,5 @@
 "use client";
+import { useNSFW } from "./nsfw-context";
 
 import { useState } from "react";
 import type { PostItem } from "@/lib/types";
@@ -31,18 +32,20 @@ interface Props {
 
 export default function PostCard({ post, onDelete, onMediaClick }: Props) {
   const [blurred, setBlurred] = useState(post.blurred);
+  const { nsfw } = useNSFW();
+  const effectiveBlurred = nsfw ? false : blurred;
 
   return (
     <Card className={`overflow-hidden relative ${post.media.length > 0 ? "pt-0" : ""}`}>
       {post.media.length > 0 && (
-        <PostMedia items={post.media} blurred={blurred} onMediaClick={onMediaClick} />
+        <PostMedia items={post.media} blurred={effectiveBlurred} onMediaClick={onMediaClick} />
       )}
       <div className="absolute top-2 right-2 z-10 flex gap-1">
         <Button
           variant="ghost"
           size="icon"
           className={`h-7 w-7 rounded-full ${blurred ? "bg-amber-500/80 text-white hover:bg-amber-600" : "bg-black/30 text-white hover:bg-black/50"}`}
-          onClick={() => setBlurred(!blurred)}
+          onClick={() => setBlurred(!blurred)} style={{display: nsfw ? "none" : ""}}
           aria-label={blurred ? "显示图片" : "模糊图片"}
         >
           {blurred ? (
