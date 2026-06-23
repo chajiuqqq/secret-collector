@@ -1,14 +1,13 @@
-import type { ListPostsResponse } from "./types";
+import type { ListPostsResponse, TgScanProgress, TgScanResponse } from "./types";
 
 const BACKEND_URL =
   typeof window === "undefined"
     ? process.env.BACKEND_INTERNAL_URL ?? "http://localhost:8080"
-    : ""; // client uses relative URLs, proxied via next.config rewrites
+    : "";
 
-// media paths are always relative (start with /media/...), resolved by browser + rewrites
 export function mediaUrl(path: string): string {
   if (path.startsWith("http")) return path;
-  return path; // relative path, e.g. /media/x/2026/06/12/ab/cdef.jpg
+  return path;
 }
 
 function apiPath(path: string): string {
@@ -35,13 +34,10 @@ export async function deletePost(id: number): Promise<void> {
   if (!res.ok && res.status !== 404) throw new Error(`Delete error: ${res.status}`);
 }
 
-export async function scanTgPosts(req: { index_path: string; media_dir: string }): Promise<{
-  posts_created: number;
-  posts_skipped: number;
-  media_found: number;
-  media_missing: number;
-  errors?: string[];
-}> {
+export async function startTgScan(req: {
+  index_path: string;
+  media_dir: string;
+}): Promise<{ task_id: string }> {
   const res = await fetch(apiPath("/api/tg/scan"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -54,4 +50,41 @@ export async function scanTgPosts(req: { index_path: string; media_dir: string }
     );
   }
   return res.json();
+}
+
+export function watchScanProgress(
+  onProgress: (p: TgScanProgress) => void,
+  onDone: (r: TgScanResponse) => void,
+  onError: (e: string) => void,
+): () => void {
+  const es = new EventSource(apiPath("/api/tg/scan/progress"));
+
+  es.addEventListener("progress", (e: MessageEvent) => {
+    const task = JSON.parse(e.data);
+    onProgress(task.progress);
+  });
+
+  es.onerror = () => {
+    es.close();
+    onError("连接中断");
+  };
+
+  // The server pushes "progress" events; when status is "done",
+  // the progress event includes the result.
+  let done = false;
+  es.addEventListener("progress", (e: MessageEvent) => {
+    const task = JSON.parse(e.data);
+    if (task.status === "done" && !done) {
+      done = true;
+      es.close();
+      onDone(task.result ?? {
+        posts_created: task.progress.posts_written,
+        posts_skipped: task.progress.posts_skipped,
+        media_found: task.progress.media_found,
+        media_missing: task.progress.media_missing,
+      });
+    }
+  });
+
+  return () => es.close();
 }

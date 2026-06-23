@@ -45,7 +45,6 @@ func parseDate(raw json.RawMessage) (*time.Time, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
 	}
-	// Try quoted string first: "2025-01-15T10:30:00"
 	if raw[0] == '"' {
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
@@ -57,7 +56,6 @@ func parseDate(raw json.RawMessage) (*time.Time, error) {
 		}
 		return &t, nil
 	}
-	// Try Unix timestamp (number)
 	var unix int64
 	if err := json.Unmarshal(raw, &unix); err != nil {
 		return nil, err
@@ -73,15 +71,42 @@ func (h *Handler) TgScan(c *gin.Context) {
 		return
 	}
 
+	scanMu.Lock()
+	if scanTask != nil && scanTask.Status == "running" {
+		scanMu.Unlock()
+		c.JSON(http.StatusConflict, gin.H{"error": "a scan task is already running"})
+		return
+	}
+
+	task := newScanTask()
+	scanTask = task
+	scanMu.Unlock()
+
+	go h.runScan(task, req)
+
+	c.JSON(http.StatusAccepted, gin.H{"task_id": task.ID})
+}
+
+func (h *Handler) runScan(task *tgScanTask, req TgScanRequest) {
+	slog.Info("tg scan started", "task_id", task.ID, "index", req.IndexPath)
+	defer func() {
+		scanMu.Lock()
+		task.Status = "done"
+		scanMu.Unlock()
+	}()
+
+	// Phase 1: parsing
 	indexData, err := os.ReadFile(req.IndexPath)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("read index file: %v", err)})
+		slog.Error("tg scan read index failed", "task_id", task.ID, "error", err)
+		task.Result = &TgScanResponse{Errors: []string{fmt.Sprintf("read index: %v", err)}}
 		return
 	}
 
 	var export tgExport
 	if err := json.Unmarshal(indexData, &export); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("parse index json: %v", err)})
+		slog.Error("tg scan parse json failed", "task_id", task.ID, "error", err)
+		task.Result = &TgScanResponse{Errors: []string{fmt.Sprintf("parse json: %v", err)}}
 		return
 	}
 
@@ -93,9 +118,29 @@ func (h *Handler) TgScan(c *gin.Context) {
 		authorName = "TG User"
 	}
 
-	mediaFound, mediaMissing := 0, 0
+	totalMsgs := 0
+	for _, msg := range export.Messages {
+		if msg.File != "" {
+			totalMsgs++
+		}
+	}
+
+	scanMu.Lock()
+	task.Progress.TotalMessages = totalMsgs
+	scanMu.Unlock()
+
+	slog.Info("tg scan phase", "task_id", task.ID, "phase", "parsing", "messages", totalMsgs)
+
+	// Phase 2: linking
+	slog.Info("tg scan phase", "task_id", task.ID, "phase", "linking")
+
+	scanMu.Lock()
+	task.Progress.Phase = "linking"
+	scanMu.Unlock()
+
 	var tgPosts []store.TgPost
 	var scanErrors []string
+	mediaFound, mediaMissing := 0, 0
 
 	for _, msg := range export.Messages {
 		if msg.File == "" {
@@ -112,6 +157,7 @@ func (h *Handler) TgScan(c *gin.Context) {
 			} else {
 				scanErrors = append(scanErrors, fmt.Sprintf("%s: %v", fileName, err))
 			}
+			updateProgress(task, mediaFound, mediaMissing, 0, 0)
 			continue
 		}
 
@@ -142,15 +188,32 @@ func (h *Handler) TgScan(c *gin.Context) {
 				Height:      info.Height,
 			}},
 		})
+
+		updateProgress(task, mediaFound, mediaMissing, 0, 0)
+		if mediaFound%100 == 0 {
+			slog.Info("tg scan progress", "task_id", task.ID,
+				"processed", mediaFound+mediaMissing, "found", mediaFound, "missing", mediaMissing)
+		}
 	}
 
-	slog.Info("tg scan parsed", "total_messages", len(export.Messages),
-		"posts", len(tgPosts), "media_found", mediaFound, "media_missing", mediaMissing)
+	slog.Info("tg scan progress", "task_id", task.ID,
+		"processed", mediaFound+mediaMissing, "found", mediaFound, "missing", mediaMissing)
 
-	result, err := h.Store.CreateTgPosts(c.Request.Context(), tgPosts)
+	// Phase 3: writing
+	slog.Info("tg scan phase", "task_id", task.ID, "phase", "writing", "posts", len(tgPosts))
+
+	scanMu.Lock()
+	task.Progress.Phase = "writing"
+	task.Progress.TotalMessages = len(tgPosts)
+	task.Progress.Processed = 0
+	task.Progress.PostsWritten = 0
+	task.Progress.PostsSkipped = 0
+	scanMu.Unlock()
+
+	result, err := h.Store.CreateTgPosts(task.Context(), tgPosts)
 	if err != nil {
-		slog.Error("create tg posts", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create posts"})
+		slog.Error("tg scan create posts failed", "task_id", task.ID, "error", err)
+		task.Result = &TgScanResponse{Errors: []string{fmt.Sprintf("create posts: %v", err)}}
 		return
 	}
 
@@ -158,7 +221,38 @@ func (h *Handler) TgScan(c *gin.Context) {
 	result.MediaMissing = mediaMissing
 	result.Errors = append(scanErrors, result.Errors...)
 
-	c.JSON(http.StatusOK, result)
+	scanResp := TgScanResponse{
+		PostsCreated: result.PostsCreated,
+		PostsSkipped: result.PostsSkipped,
+		MediaFound:   mediaFound,
+		MediaMissing: mediaMissing,
+		Errors:       append(scanErrors, result.Errors...),
+	}
+
+	scanMu.Lock()
+	task.Result = &scanResp
+	task.Progress.Phase = "writing"
+	task.Progress.Processed = result.PostsCreated + result.PostsSkipped
+	task.Progress.PostsWritten = result.PostsCreated
+	task.Progress.PostsSkipped = result.PostsSkipped
+	task.Progress.MediaFound = mediaFound
+	task.Progress.MediaMissing = mediaMissing
+	scanMu.Unlock()
+
+	slog.Info("tg scan done", "task_id", task.ID,
+		"posts_created", result.PostsCreated, "posts_skipped", result.PostsSkipped,
+		"media_found", mediaFound, "media_missing", mediaMissing,
+		"errors", len(result.Errors))
+}
+
+func updateProgress(task *tgScanTask, found, missing, written, skipped int) {
+	scanMu.Lock()
+	task.Progress.Processed = found + missing
+	task.Progress.MediaFound = found
+	task.Progress.MediaMissing = missing
+	task.Progress.PostsWritten = written
+	task.Progress.PostsSkipped = skipped
+	scanMu.Unlock()
 }
 
 func isVideo(mediaType string) bool {

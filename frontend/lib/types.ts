@@ -39,3 +39,13 @@ export interface TgScanResponse {
   media_missing: number;
   errors?: string[];
 }
+
+export interface TgScanProgress {
+  phase: "parsing" | "linking" | "writing";
+  total_messages: number;
+  processed: number;
+  media_found: number;
+  media_missing: number;
+  posts_written: number;
+  posts_skipped: number;
+}

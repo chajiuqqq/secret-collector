@@ -1,12 +1,19 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { scanTgPosts } from "@/lib/api";
+import { startTgScan, watchScanProgress } from "@/lib/api";
+import type { TgScanProgress, TgScanResponse } from "@/lib/types";
 
 const scanModes = [
   { key: "index", label: "文件索引" },
   { key: "link", label: "分享链接" },
 ];
+
+const phaseLabels: Record<string, string> = {
+  parsing: "解析中",
+  linking: "链接文件中",
+  writing: "写入数据库",
+};
 
 export default function SettingsPanel() {
   const [open, setOpen] = useState(false);
@@ -16,6 +23,7 @@ export default function SettingsPanel() {
   );
   const [mediaDir, setMediaDir] = useState("/vol1/1000/tg");
   const [scanning, setScanning] = useState(false);
+  const [progress, setProgress] = useState<TgScanProgress | null>(null);
   const [result, setResult] = useState<{
     type: "success" | "error";
     message: string;
@@ -35,22 +43,39 @@ export default function SettingsPanel() {
 
   const handleScan = async () => {
     setScanning(true);
+    setProgress(null);
     setResult(null);
     try {
-      const res = await scanTgPosts({
+      await startTgScan({
         index_path: indexPath,
         media_dir: mediaDir,
       });
-      setResult({
-        type: "success",
-        message: `创建 ${res.posts_created} 条帖子，跳过 ${res.posts_skipped} 条，找到 ${res.media_found} 个媒体，缺失 ${res.media_missing} 个`,
-      });
+
+      watchScanProgress(
+        (p) => setProgress(p),
+        (r: TgScanResponse) => {
+          setScanning(false);
+          setProgress(null);
+          setResult({
+            type: "success",
+            message: `创建 ${r.posts_created} 条帖子，跳过 ${r.posts_skipped} 条，找到 ${r.media_found} 个媒体，缺失 ${r.media_missing} 个`,
+          });
+        },
+        (err) => {
+          setScanning(false);
+          setProgress(null);
+          setResult({ type: "error", message: err });
+        },
+      );
     } catch (err) {
-      setResult({ type: "error", message: (err as Error).message });
-    } finally {
       setScanning(false);
+      setResult({ type: "error", message: (err as Error).message });
     }
   };
+
+  const pct = progress && progress.total_messages > 0
+    ? Math.round((progress.processed / progress.total_messages) * 100)
+    : 0;
 
   return (
     <div className="relative" ref={panelRef}>
@@ -121,13 +146,34 @@ export default function SettingsPanel() {
               >
                 {scanning ? "扫描中..." : "扫描录入"}
               </button>
+
+              {scanning && progress && (
+                <div className="mb-3">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                    <span>{phaseLabels[progress.phase] ?? progress.phase}</span>
+                    <span>{pct}%</span>
+                  </div>
+                  <div className="w-full bg-muted rounded-full h-2 mb-1">
+                    <div
+                      className="bg-primary h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    已处理 {progress.processed} / {progress.total_messages}
+                    {" · "}媒体 {progress.media_found} 个
+                  </p>
+                </div>
+              )}
             </>
           )}
 
           {result && (
             <p
               className={`text-xs ${
-                result.type === "success" ? "text-green-600 dark:text-green-400" : "text-red-500"
+                result.type === "success"
+                  ? "text-green-600 dark:text-green-400"
+                  : "text-red-500"
               } mb-2`}
             >
               {result.message}
