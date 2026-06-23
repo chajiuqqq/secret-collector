@@ -9,41 +9,50 @@ interface Props {
 }
 
 /**
- * Desktop: right-aligned dropdown below the trigger button.
- * Mobile (<640px): full-width bottom sheet that slides up. The sheet's
- * bottom is bound to `visualViewport.height`, so it stays visible above
- * the on-screen keyboard on iOS/Android instead of being covered by it.
+ * Desktop (≥640px): right-aligned dropdown below the trigger.
+ * Mobile (<640px): full-width sheet centered in the visible viewport.
+ * The sheet's position and height track `visualViewport`, so the
+ * on-screen keyboard never covers it and it never overflows the screen.
  */
 export default function BottomSheet({ open, onClose, children }: Props) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const [isMobile, setIsMobile] = useState(false);
-  const [keyboardOffset, setKeyboardOffset] = useState(0);
+  const [vv, setVv] = useState<{ top: number; height: number }>({
+    top: 0,
+    height: 0,
+  });
 
   // Detect mobile viewport once on mount; re-check on resize.
   useEffect(() => {
-    const check = () => setIsMobile(window.matchMedia("(max-width: 639px)").matches);
+    const check = () =>
+      setIsMobile(window.matchMedia("(max-width: 639px)").matches);
     check();
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  // Track on-screen keyboard via visualViewport; push the sheet up by the
-  // hidden-by-keyboard amount so its content stays above the keyboard.
+  // Track visualViewport for keyboard-aware positioning.
   useEffect(() => {
     if (!open || !isMobile) return;
-    const vv = window.visualViewport;
-    if (!vv) return;
+    const visual = window.visualViewport;
     const update = () => {
-      const offset = window.innerHeight - vv.height - vv.offsetTop;
-      setKeyboardOffset(Math.max(0, offset));
+      if (visual) {
+        setVv({ top: visual.offsetTop, height: visual.height });
+      } else {
+        setVv({ top: 0, height: window.innerHeight });
+      }
     };
-    vv.addEventListener("resize", update);
-    vv.addEventListener("scroll", update);
     update();
-    return () => {
-      vv.removeEventListener("resize", update);
-      vv.removeEventListener("scroll", update);
-    };
+    if (visual) {
+      visual.addEventListener("resize", update);
+      visual.addEventListener("scroll", update);
+      return () => {
+        visual.removeEventListener("resize", update);
+        visual.removeEventListener("scroll", update);
+      };
+    }
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
   }, [open, isMobile]);
 
   // Click outside / Escape to close.
@@ -65,8 +74,7 @@ export default function BottomSheet({ open, onClose, children }: Props) {
     };
   }, [open, onClose]);
 
-  // Lock body scroll while open (mobile sheet only — keep page interactive
-  // behind a desktop dropdown).
+  // Lock body scroll while open on mobile.
   useEffect(() => {
     if (!open || !isMobile) return;
     const prev = document.body.style.overflow;
@@ -79,6 +87,10 @@ export default function BottomSheet({ open, onClose, children }: Props) {
   if (!open) return null;
 
   if (isMobile) {
+    // Leave a 16px margin top+bottom inside the visible viewport.
+    const margin = 16;
+    const maxHeight = Math.max(120, vv.height - margin * 2);
+
     return (
       <>
         <div
@@ -88,16 +100,14 @@ export default function BottomSheet({ open, onClose, children }: Props) {
         <div
           ref={sheetRef}
           style={{
-            bottom: keyboardOffset,
-            // Cap height to the visible viewport (above keyboard) minus a
-            // small gap so the user sees the top of the sheet.
-            maxHeight: `calc(100dvh - ${keyboardOffset}px - 24px)`,
+            position: "fixed",
+            top: vv.top + margin,
+            left: margin,
+            right: margin,
+            maxHeight,
           }}
-          className="fixed inset-x-0 z-50 bg-card border-t rounded-t-2xl shadow-2xl p-4 pb-6 overflow-y-auto animate-slide-up transition-[bottom] duration-150"
+          className="z-50 bg-card border rounded-2xl shadow-2xl p-4 overflow-y-auto animate-fade-in"
         >
-          <div className="flex justify-center -mt-1 mb-3">
-            <div className="w-10 h-1 rounded-full bg-muted-foreground/30" />
-          </div>
           {children}
         </div>
       </>
