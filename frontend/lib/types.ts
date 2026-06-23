@@ -49,3 +49,25 @@ export interface TgScanProgress {
   posts_written: number;
   posts_skipped: number;
 }
+
+export interface CaptureProgress {
+  phase: "detecting" | "fetching" | "filing" | "writing";
+  url: string;
+}
+
+export interface CaptureResult {
+  post_id: number;
+  platform: string;
+  original_url: string;
+  duplicated: boolean;
+  media_count: number;
+}
+
+export interface CaptureTask {
+  id: string;
+  status: "running" | "done";
+  progress: CaptureProgress;
+  result?: CaptureResult;
+  error?: string;
+  started_at: string;
+}

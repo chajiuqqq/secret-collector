@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Providers from "@/components/providers";
 import ThemeToggle from "@/components/theme-toggle";
 import SettingsPanel from "@/components/settings-panel";
+import CaptureButton from "@/components/capture-button";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -33,6 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="max-w-screen-2xl mx-auto flex items-center justify-between px-4 h-14">
               <h1 className="font-semibold text-lg">私密收藏夹</h1>
               <div className="flex items-center gap-1">
+                <CaptureButton />
                 <SettingsPanel />
                 <ThemeToggle />
               </div>

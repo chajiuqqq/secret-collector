@@ -65,3 +65,19 @@ type TgScanResponse struct {
 	MediaMissing int      `json:"media_missing"`
 	Errors       []string `json:"errors,omitempty"`
 }
+
+type CaptureRequest struct {
+	URL string `json:"url" binding:"required,http_url"`
+}
+
+type CaptureResponse struct {
+	TaskID string `json:"task_id"`
+}
+
+type CaptureResult struct {
+	PostID      int64  `json:"post_id"`
+	Platform    string `json:"platform"`
+	OriginalURL string `json:"original_url"`
+	Duplicated  bool   `json:"duplicated"`
+	MediaCount  int    `json:"media_count"`
+}

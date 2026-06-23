@@ -1,4 +1,11 @@
-import type { ListPostsResponse, TgScanProgress, TgScanResponse } from "./types";
+import type {
+  ListPostsResponse,
+  TgScanProgress,
+  TgScanResponse,
+  CaptureProgress,
+  CaptureResult,
+  CaptureTask,
+} from "./types";
 
 const BACKEND_URL =
   typeof window === "undefined"
@@ -85,6 +92,55 @@ export function watchScanProgress(
       });
     }
   });
+
+  return () => es.close();
+}
+
+export async function startCapture(url: string): Promise<{ task_id: string }> {
+  const res = await fetch(apiPath("/api/capture"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      (body as { error?: string }).error ?? `Capture error: ${res.status}`,
+    );
+  }
+  return res.json();
+}
+
+export function watchCaptureProgress(
+  onProgress: (p: CaptureProgress) => void,
+  onDone: (r: CaptureResult) => void,
+  onError: (e: string) => void,
+): () => void {
+  const es = new EventSource(apiPath("/api/capture/progress"));
+
+  let done = false;
+  es.addEventListener("progress", (e: MessageEvent) => {
+    if (done) return;
+    const task = JSON.parse(e.data) as CaptureTask;
+    onProgress(task.progress);
+    if (task.status === "done") {
+      done = true;
+      es.close();
+      if (task.error) {
+        onError(task.error);
+      } else if (task.result) {
+        onDone(task.result);
+      } else {
+        onError("任务结束但未返回结果");
+      }
+    }
+  });
+
+  es.onerror = () => {
+    if (done) return;
+    es.close();
+    onError("连接中断");
+  };
 
   return () => es.close();
 }

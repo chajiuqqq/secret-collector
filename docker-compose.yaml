@@ -22,6 +22,9 @@ services:
       MEDIA_ROOT: /data/media
       DOWNLOAD_WORKERS: "4"
       CORS_ORIGINS: "*"
+      # Optional capture-related env vars (see .env.example)
+      XHS_COOKIE_FILE: ${XHS_COOKIE_FILE:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
     volumes:
       - ${MEDIA_PATH:-./media}:/data/media
       - /vol2/@apphome/trim.openclaw/data/workspace:/tg-index:ro
