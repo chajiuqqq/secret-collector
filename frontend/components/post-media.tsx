@@ -62,9 +62,7 @@ function MediaImg({ m, blurred, onClick }: { m: MediaItem; blurred?: boolean; on
   );
 }
 
-function MediaVideo({ m, blurred: _blurred, onClick }: { m: MediaItem; blurred?: boolean; onClick?: () => void }) {
-  const videoRef = useAutoplayVideo();
-
+function MediaVideo({ m, blurred, onClick }: { m: MediaItem; blurred?: boolean; onClick?: () => void }) {
   if (m.status === "pending" || m.status === "downloading") {
     return <Skeleton className="w-full h-48 rounded-lg" />;
   }
@@ -79,16 +77,20 @@ function MediaVideo({ m, blurred: _blurred, onClick }: { m: MediaItem; blurred?:
   return (
     <div className="relative">
       <video
-        ref={videoRef}
         src={src}
         controls
         preload="none"
-        autoPlay
         muted
         loop
         playsInline
         className="w-full rounded-lg bg-black"
+        style={blurred ? { filter: "blur(24px)" } : undefined}
       />
+      {blurred && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span className="text-white text-xs bg-black/50 rounded-full px-2 py-0.5">模糊</span>
+        </div>
+      )}
       {onClick && (
         <button
           onClick={onClick}
