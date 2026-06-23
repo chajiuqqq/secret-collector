@@ -229,7 +229,7 @@ type TgMedia struct {
 
 type TgPost struct {
 	ChatID     int64
-	MessageID  int64
+	Date       string
 	AuthorName string
 	Content    string
 	PostedAt   *time.Time
@@ -248,7 +248,7 @@ func (s *Store) CreateTgPosts(ctx context.Context, posts []TgPost) (TgScanResult
 	var res TgScanResult
 	err := pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
 		for _, p := range posts {
-			originalURL := fmt.Sprintf("tg://%d/%d", p.ChatID, p.MessageID)
+			originalURL := fmt.Sprintf("tg://%d/%s", p.ChatID, p.Date)
 			var postID int64
 			err := tx.QueryRow(ctx, `
 				INSERT INTO posts (platform, original_url, author_name, content, posted_at)
@@ -262,7 +262,7 @@ func (s *Store) CreateTgPosts(ctx context.Context, posts []TgPost) (TgScanResult
 					res.PostsSkipped++
 					continue
 				}
-				res.Errors = append(res.Errors, fmt.Sprintf("post %d/%d: %v", p.ChatID, p.MessageID, err))
+				res.Errors = append(res.Errors, fmt.Sprintf("post %d/%s: %v", p.ChatID, p.Date, err))
 				continue
 			}
 			res.PostsCreated++

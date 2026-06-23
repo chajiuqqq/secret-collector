@@ -129,62 +129,89 @@ func (h *Handler) runScan(task *tgScanTask, req TgScanRequest) {
 
 	slog.Info("tg scan phase", "task_id", task.ID, "phase", "parsing", "messages", totalMsgs)
 
-	// Phase 2: linking
+	// Phase 2: group messages by date, then link media
 	slog.Info("tg scan phase", "task_id", task.ID, "phase", "linking")
 
 	scanMu.Lock()
 	task.Progress.Phase = "linking"
 	scanMu.Unlock()
 
-	var tgPosts []store.TgPost
-	var scanErrors []string
-	mediaFound, mediaMissing := 0, 0
-
+	type dateGroup struct {
+		date     string
+		messages []tgMessage
+	}
+	var groups []dateGroup
+	groupIdx := make(map[string]int)
 	for _, msg := range export.Messages {
 		if msg.File == "" {
 			continue
 		}
-
-		fileName := fmt.Sprintf("%d_%d_%s", export.ID, msg.ID, msg.File)
-		srcPath := filepath.Join(req.MediaDir, fileName)
-
-		localPath, info, err := linkTgMedia(srcPath, fileName, h.MediaRoot)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				mediaMissing++
-			} else {
-				scanErrors = append(scanErrors, fmt.Sprintf("%s: %v", fileName, err))
-			}
-			updateProgress(task, mediaFound, mediaMissing, 0, 0)
-			continue
+		dateStr := string(msg.Date)
+		if i, ok := groupIdx[dateStr]; ok {
+			groups[i].messages = append(groups[i].messages, msg)
+		} else {
+			groupIdx[dateStr] = len(groups)
+			groups = append(groups, dateGroup{date: dateStr, messages: []tgMessage{msg}})
 		}
+	}
 
-		kind := "image"
-		if isVideo(msg.MediaType) {
-			kind = "video"
-		}
+	var tgPosts []store.TgPost
+	var scanErrors []string
+	mediaFound, mediaMissing := 0, 0
 
+	for _, g := range groups {
+		var medias []store.TgMedia
+		var content string
 		var postedAt *time.Time
-		if t, err := parseDate(msg.Date); err == nil {
-			postedAt = t
-		}
 
-		mediaFound++
+		for _, msg := range g.messages {
+			fileName := fmt.Sprintf("%d_%d_%s", export.ID, msg.ID, msg.File)
+			srcPath := filepath.Join(req.MediaDir, fileName)
 
-		tgPosts = append(tgPosts, store.TgPost{
-			ChatID:     export.ID,
-			MessageID:  msg.ID,
-			AuthorName: authorName,
-			Content:    strings.TrimSpace(msg.Text),
-			PostedAt:   postedAt,
-			Media: []store.TgMedia{{
+			localPath, info, err := linkTgMedia(srcPath, fileName, h.MediaRoot)
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					mediaMissing++
+				} else {
+					scanErrors = append(scanErrors, fmt.Sprintf("%s: %v", fileName, err))
+				}
+				continue
+			}
+
+			kind := "image"
+			if isVideo(msg.MediaType) {
+				kind = "video"
+			}
+
+			mediaFound++
+
+			medias = append(medias, store.TgMedia{
 				Kind:        kind,
 				LocalPath:   localPath,
 				ContentType: info.ContentType,
 				SizeBytes:   info.SizeBytes,
 				Width:       info.Width,
 				Height:      info.Height,
-			}},
+			})
+
+			if content == "" && strings.TrimSpace(msg.Text) != "" {
+				content = strings.TrimSpace(msg.Text)
+			}
+
+			if postedAt == nil {
+				if t, err := parseDate(msg.Date); err == nil {
+					postedAt = t
+				}
+			}
+		}
+
+		tgPosts = append(tgPosts, store.TgPost{
+			ChatID:     export.ID,
+			Date:       g.date,
+			AuthorName: authorName,
+			Content:    content,
+			PostedAt:   postedAt,
+			Media:      medias,
 		})
 
 		updateProgress(task, mediaFound, mediaMissing, 0, 0)
