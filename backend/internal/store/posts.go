@@ -277,7 +277,7 @@ func (s *Store) CreateTgPosts(ctx context.Context, posts []TgPost) (TgScanResult
 				VALUES ('tg', $1, $2, $3, $4, $5, true)
 				ON CONFLICT (platform, original_url) DO NOTHING
 				RETURNING id`,
-				originalURL, p.AuthorName, p.Content, p.PostedAt,
+				originalURL, p.AuthorName, p.Content, p.PostedAt, p.PostedAt,
 			).Scan(&postID)
 			if err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
