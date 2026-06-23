@@ -353,6 +353,45 @@ type TagItem struct {
 	PostCount int    `json:"post_count"`
 }
 
+func hasPrefix(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+
+func (s *Store) BackfillTags(ctx context.Context) error {
+	return pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM tags`); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `SELECT platform, COALESCE(content, '') FROM posts WHERE deleted_at IS NULL`)
+		if err != nil {
+			return err
+		}
+		type row struct {
+			platform, content string
+		}
+		var all []row
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.platform, &r.content); err != nil {
+				rows.Close()
+				return err
+			}
+			all = append(all, r)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for _, r := range all {
+			names := append([]string{r.platform}, extractHashtags(r.content)...)
+			if err := upsertTags(ctx, tx, names); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (s *Store) ListTags(ctx context.Context) ([]TagItem, error) {
 	rows, err := s.Pool.Query(ctx, `SELECT name, post_count FROM tags WHERE post_count > 0 ORDER BY post_count DESC, name`)
 	if err != nil {
@@ -360,12 +399,28 @@ func (s *Store) ListTags(ctx context.Context) ([]TagItem, error) {
 	}
 	defer rows.Close()
 	var tags []TagItem
+	// Fixed platform tags always come first
+	fixed := map[string]int{"x": 0, "xiaohongshu": 0, "tg": 0}
+	seen := map[string]bool{}
 	for rows.Next() {
 		var t TagItem
 		if err := rows.Scan(&t.Name, &t.PostCount); err != nil {
 			return nil, err
 		}
-		tags = append(tags, t)
+		seen[t.Name] = true
+		if _, isFixed := fixed[t.Name]; isFixed {
+			fixed[t.Name] = t.PostCount
+		} else {
+			tags = append(tags, t)
+		}
 	}
-	return tags, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Prepend fixed platform tags in order (always shown, even if count=0)
+	fixedTags := make([]TagItem, 0, 3)
+	for _, p := range []string{"x", "xiaohongshu", "tg"} {
+		fixedTags = append(fixedTags, TagItem{Name: p, PostCount: fixed[p]})
+	}
+	return append(fixedTags, tags...), nil
 }

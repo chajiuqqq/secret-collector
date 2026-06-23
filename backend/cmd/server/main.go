@@ -34,6 +34,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Backfill tags from existing posts on startup (use fresh context, not the migration timeout)
+	bgCtx, bgCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer bgCancel()
+	if err := s.BackfillTags(bgCtx); err != nil {
+		slog.Error("backfill tags", "error", err)
+		os.Exit(1)
+	}
+
 	fi, err := os.Stat(cfg.MediaRoot)
 	if err != nil {
 		if err := os.MkdirAll(cfg.MediaRoot, 0755); err != nil {
