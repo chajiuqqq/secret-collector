@@ -1,187 +1,52 @@
 # 私密收藏夹
 
-双项目：Go 后端 REST API + Next.js 前端瀑布流展示。用于捕获 X/Twitter 和小红书帖子(无需任何API配置)，自动下载媒体文件。
+捕获和管理 X/Twitter、小红书、Telegram 收藏内容的私密收藏夹。无需任何第三方 API 配置，本地存储所有图片视频。
 
 瀑布流：
-API
 ![alt text](docs/aca5068742a821002aa71f6c326c5b8a.jpg)
 
 大图预览：
-
 ![alt text](docs/95ec1f73b54a2633730b135f2ae84f88.jpg)
 
 手机端：
 ![alt text](docs/605387311dabcc7a415499ba41369250.jpg)
 ![alt text](docs/c91f32a663892fa4d1d61fa179f2105f.jpg)
 
-## 结合Agent使用步骤
+## 特色
 
-1. 先配置TG的话题，使用[social-capture skill](https://github.com/chajiuqqq/social-capture)让Agent抓取帖子元数据并推送到该项目后端保存
-![alt text](docs/fc39d5dfe80b60f3387af9178f2a7d3a.jpg)
+- **三平台支持** — X/Twitter、小红书、Telegram（Saved Messages JSON 导入）
+- **零 API 依赖** — 不需要任何官方 API key，前端贴链接即可抓取
+- **自动下载** — 媒体异步下载到本地，SHA256 去重，失败自动重试
+- **NSFW 模糊** — TG 来源默认模糊，逐帖切换可见，全局 NSFW 模式一键解锁
+- **标签管理** — 平台标签（X / 小红书 / TG）+ 内容 hashtag 自动提取，后端维护点数
+- **暗色主题** — 跟随系统或手动切换
+- **移动适配** — 弹窗自适应底部弹出，键盘安全区适配
 
-2. 分享x/小红书链接到TG的这个话题，Agent会自动执行抓取
+## 功能
+
+| 功能 | 说明 |
+|------|------|
+| 链接抓取 | 顶部 ➕ 按钮，支持 X/小红书 URL，多条换行批量抓取 |
+| TG 导入 | 设置面板 |
+| 瀑布流 | CSS columns 1~4 列响应式，无限滚动 |
+| 标签过滤 | 顶部标签栏，固定 X/小红书/TG + 全部 hashtag，点击后端 SQL 过滤 |
+| 模糊开关 | 每个卡片右上角眼睛图标，单独切换；NSFW 模式总开关在设置面板 |
+| 媒体灯箱 | 点击图片/视频全屏，ESC 关闭 |
+| 软删除 | 卡片右上角删除按钮，DB 软删除并递减标签计数 |
+| 暗色模式 | next-themes 跟随系统 |
 
 ## 启动
 
 ```bash
-cp .env.example .env          # 可选：设置 MEDIA_PATH=/mnt/nas/capture
+cp .env.example .env
 docker compose up -d --build
 ```
 
-- 前端：http://localhost:3000
-- 后端 API：http://localhost:8080
+前端 http://localhost:3000，后端 API http://localhost:8080
 
-## 架构
+## 文档
 
-```
-[POST JSON] ──→ Go Backend :8080 ──→ PostgreSQL :5432
-                    │                    ├── posts 表
-                    ├── 异步下载 Worker      ├── media 表
-                    ├── GET /media/*       │── schema_migrations
-                    └── /api/posts          └── 软删除 (deleted_at)
-
-Next.js :3000 ──SSR/rewrites──→ Backend
-    ├── /api/* ──rewrite──→ backend:8080
-    └── /media/* ─rewrite──→ backend:8080
-```
-
-- 前端不直连数据库，所有数据走后端 API
-- 前端访问图片/视频统一用相对路径 `/media/...`，通过 Next.js rewrites 代理到后端
-- 无需 `NEXT_PUBLIC_BACKEND_URL`，支持任意 host 访问
-
-## 捕获帖子
-
-```bash
-curl -X POST http://localhost:8080/api/posts \
-  -H "Content-Type: application/json" \
-  -d '{
-    "platform": "x",
-    "original_url": "https://x.com/user/status/123",
-    "author_name": "作者名",
-    "author_avatar_url": "https://example.com/avatar.jpg",
-    "content": "帖子正文",
-    "media": [
-      {"kind": "image", "url": "https://example.com/img1.jpg"},
-      {"kind": "video", "url": "https://example.com/vid1.mp4"}
-    ]
-  }'
-```
-
-`platform` 取值：`x` | `xiaohongshu`。`original_url` 用于去重（`UNIQUE (platform, original_url)`），重复提交返回 `duplicated: true`。
-
-## 查询帖子
-
-```bash
-curl "http://localhost:8080/api/posts?limit=20&cursor=<base64>"
-```
-
-keyset 分页，按 `captured_at DESC, id DESC`。
-
-## 删除帖子
-
-```bash
-curl -X DELETE "http://localhost:8080/api/posts/:id"
-```
-
-软删除（设 `deleted_at` 时间戳），已删除的不会再出现，重复删除返回 404。前端删除后即时从 DOM 移除，不刷新页面。
-
-## 媒体下载
-
-后端收到元数据后异步下载媒体文件到 `MEDIA_ROOT`（默认 `/data/media`，通过 Docker volume 挂载到 host）。
-
-- **目录结构**：`{platform}/{YYYY/MM/DD}/{sha256前2位}/{sha256}.{ext}`
-- **去重**：SHA256 命名，相同内容只存一份
-- **防盗链**：xhscdn.com 域名自动带 `Referer: https://www.xiaohongshu.com/`
-- **权限**：下载后自动 chmod 644，host 可直接打开
-- **状态**：pending → downloading → downloaded / failed
-- **重试**：最多 5 次，指数退避（1m, 5m, 25m, 125m）
-- **崩溃恢复**：启动时重置 stuck downloading → pending，30s 周期扫描
-- **安全限制**：单文件最大 500MB，拒绝 text/html 响应
-
-## 前端功能
-
-| 功能 | 说明 |
-|------|------|
-| 瀑布流 | CSS columns，响应式 1~4 列 |
-| 无限滚动 | IntersectionObserver + keyset 光标分页 |
-| 暗色模式 | next-themes，header 切换按钮，跟随系统 |
-| 媒体灯箱 | 点击图片/视频全屏查看，ESC 或点击遮罩关闭 |
-| 原链跳转 | 点击正文在新标签页打开原帖 |
-| 删除按钮 | hover 显示垃圾桶图标，乐观删除 |
-| 时间显示 | 相对时间（刚刚/X分钟前） |
-| 平台标识 | X（灰黑）/ 小红书（红色）Badge |
-| 加载占位 | Skeleton 骨架屏 |
-| 空态 | "暂无帖子" |
-
-## 数据库
-
-**posts 表**：id, platform, original_url (UNIQUE), author_name, author_avatar_url, avatar_media_id → media, content, posted_at, captured_at, deleted_at
-
-**media 表**：id, post_id → posts, kind (image/video/avatar), position, original_url, status, local_path, content_type, size_bytes, width, height, sha256, attempts, last_error
-
-## 环境变量
-
-### Backend
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `DATABASE_URL` | `postgres://capture:capture@postgres:5432/capture` | PG 连接串 |
-| `MEDIA_ROOT` | `/data/media` | 媒体存储目录 |
-| `LISTEN_ADDR` | `:8080` | 监听地址 |
-| `DOWNLOAD_WORKERS` | `4` | 下载并发数 |
-| `DOWNLOAD_TIMEOUT` | `120s` | 单文件下载超时 |
-| `MAX_MEDIA_BYTES` | `524288000` | 单文件 500MB 上限 |
-| `CORS_ORIGINS` | `*` | 跨域来源 |
-
-### Frontend
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `BACKEND_INTERNAL_URL` | `http://backend:8080` | SSR / rewrites 代理目标 |
-
-## 本地开发
-
-```bash
-# 起一个 postgres
-docker run -d --name capture-pg -e POSTGRES_USER=capture -e POSTGRES_PASSWORD=capture -e POSTGRES_DB=capture -p 5432:5432 postgres:17-alpine
-
-# 后端
-DATABASE_URL="postgres://capture:capture@localhost:5432/capture?sslmode=disable" \
-MEDIA_ROOT=/tmp/capture-media \
-go run ./cmd/server
-
-# 前端
-BACKEND_INTERNAL_URL=http://localhost:8080 npm run dev
-```
-
-## 项目结构
-
-```
-capture/
-├── docker-compose.yaml
-├── .env.example
-├── backend/
-│   ├── Dockerfile
-│   ├── go.mod / go.sum
-│   ├── cmd/server/main.go
-│   └── internal/
-│       ├── config/config.go
-│       ├── api/{router,cors,posts,dto}.go
-│       ├── store/{store,posts,media}.go
-│       ├── downloader/{downloader,fetch}.go
-│       └── migrations/{001_init.sql,002_soft_delete.sql,embed.go}
-└── frontend/
-    ├── Dockerfile
-    ├── next.config.ts
-    ├── app/{layout,page,globals}.tsx/css
-    ├── components/
-    │   ├── post-feed.tsx          # 瀑布流 + 无限滚动
-    │   ├── post-card.tsx          # 卡片（头像/作者/平台/正文/删除）
-    │   ├── post-media.tsx         # 媒体展示（img/video + 点击灯箱）
-    │   ├── media-lightbox.tsx     # 灯箱弹窗
-    │   ├── platform-badge.tsx     # 平台标识
-    │   ├── theme-toggle.tsx       # 暗色切换
-    │   ├── providers.tsx          # ThemeProvider 包装
-    │   └── ui/                    # shadcn 组件
-    └── lib/{api,types}.ts
-```
+- [开发环境与本地调试](docs/development.md)
+- [生产部署](docs/deployment.md)
+- [技术架构](docs/architecture.md)
+- [TG 媒体导入](docs/tg-download-saved-media.md)
