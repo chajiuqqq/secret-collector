@@ -1,8 +1,6 @@
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -150,7 +148,7 @@ func (h *Handler) runScan(task *tgScanTask, req TgScanRequest) {
 		fileName := fmt.Sprintf("%d_%d_%s", export.ID, msg.ID, msg.File)
 		srcPath := filepath.Join(req.MediaDir, fileName)
 
-		localPath, info, err := linkTgMedia(srcPath, h.MediaRoot)
+		localPath, info, err := linkTgMedia(srcPath, fileName, h.MediaRoot)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				mediaMissing++
@@ -259,27 +257,18 @@ func isVideo(mediaType string) bool {
 	return mediaType == "video" || mediaType == "animation" || mediaType == "video_message"
 }
 
-func linkTgMedia(srcPath, mediaRoot string) (string, *store.DownloadedInfo, error) {
-	f, err := os.Open(srcPath)
+func linkTgMedia(srcPath, fileName, mediaRoot string) (string, *store.DownloadedInfo, error) {
+	fi, err := os.Stat(srcPath)
 	if err != nil {
 		return "", nil, err
 	}
-	defer f.Close()
 
-	hasher := sha256.New()
-	written, err := io.Copy(hasher, f)
-	if err != nil {
-		return "", nil, fmt.Errorf("hash: %w", err)
-	}
-
-	hash := hex.EncodeToString(hasher.Sum(nil))
-	ext := strings.ToLower(filepath.Ext(srcPath))
+	ext := strings.ToLower(filepath.Ext(fileName))
 	if ext == "" {
 		ext = ".jpg"
 	}
 
-	rel := filepath.Join("tg", time.Now().UTC().Format("2006/01/02"),
-		hash[:2], hash+ext)
+	rel := filepath.Join("tg", time.Now().UTC().Format("2006/01/02"), fileName)
 
 	destDir := filepath.Join(mediaRoot, filepath.Dir(rel))
 	if err := os.MkdirAll(destDir, 0755); err != nil {
@@ -300,8 +289,7 @@ func linkTgMedia(srcPath, mediaRoot string) (string, *store.DownloadedInfo, erro
 	info := &store.DownloadedInfo{
 		LocalPath:   rel,
 		ContentType: ct,
-		SizeBytes:   written,
-		SHA256:      hash,
+		SizeBytes:   fi.Size(),
 	}
 
 	if ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".gif" || ext == ".webp" || ext == ".bmp" {
