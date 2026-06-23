@@ -13,8 +13,9 @@ import (
 const defaultLimit = 20
 
 type Handler struct {
-	Store  *store.Store
-	Enqueue func(ids []int64)
+	Store    *store.Store
+	MediaRoot string
+	Enqueue   func(ids []int64)
 }
 
 func (h *Handler) CreatePost(c *gin.Context) {

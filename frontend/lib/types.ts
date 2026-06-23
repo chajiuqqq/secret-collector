@@ -12,7 +12,7 @@ export interface MediaItem {
 
 export interface PostItem {
   id: number;
-  platform: "x" | "xiaohongshu";
+  platform: "x" | "xiaohongshu" | "tg";
   original_url: string;
   author_name: string;
   author_avatar_url: string | null;
@@ -25,4 +25,17 @@ export interface PostItem {
 export interface ListPostsResponse {
   posts: PostItem[];
   next_cursor: string | null;
+}
+
+export interface TgScanRequest {
+  index_path: string;
+  media_dir: string;
+}
+
+export interface TgScanResponse {
+  posts_created: number;
+  posts_skipped: number;
+  media_found: number;
+  media_missing: number;
+  errors?: string[];
 }

@@ -24,6 +24,8 @@ services:
       CORS_ORIGINS: "*"
     volumes:
       - ${MEDIA_PATH:-./media}:/data/media
+      - /vol2/@apphome/trim.openclaw/data/workspace:/tg-index:ro
+      - /vol1/1000/tg:/tg-media:ro
     depends_on:
       postgres:
         condition: service_healthy

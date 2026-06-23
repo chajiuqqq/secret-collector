@@ -34,3 +34,24 @@ export async function deletePost(id: number): Promise<void> {
   });
   if (!res.ok && res.status !== 404) throw new Error(`Delete error: ${res.status}`);
 }
+
+export async function scanTgPosts(req: { index_path: string; media_dir: string }): Promise<{
+  posts_created: number;
+  posts_skipped: number;
+  media_found: number;
+  media_missing: number;
+  errors?: string[];
+}> {
+  const res = await fetch(apiPath("/api/tg/scan"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      (body as { error?: string }).error ?? `Scan error: ${res.status}`
+    );
+  }
+  return res.json();
+}

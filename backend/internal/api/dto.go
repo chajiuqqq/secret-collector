@@ -8,7 +8,7 @@ type MediaRequest struct {
 }
 
 type CreatePostRequest struct {
-	Platform        string         `json:"platform" binding:"required,oneof=x xiaohongshu"`
+	Platform        string         `json:"platform" binding:"required,oneof=x xiaohongshu tg"`
 	OriginalURL     string         `json:"original_url" binding:"required,http_url"`
 	AuthorName      string         `json:"author_name" binding:"required"`
 	AuthorAvatarURL string         `json:"author_avatar_url"`
@@ -51,4 +51,17 @@ type PostResponse struct {
 type ListPostsResponse struct {
 	Posts      []PostResponse `json:"posts"`
 	NextCursor *string        `json:"next_cursor"`
+}
+
+type TgScanRequest struct {
+	IndexPath string `json:"index_path" binding:"required"`
+	MediaDir  string `json:"media_dir" binding:"required"`
+}
+
+type TgScanResponse struct {
+	PostsCreated int      `json:"posts_created"`
+	PostsSkipped int      `json:"posts_skipped"`
+	MediaFound   int      `json:"media_found"`
+	MediaMissing int      `json:"media_missing"`
+	Errors       []string `json:"errors,omitempty"`
 }

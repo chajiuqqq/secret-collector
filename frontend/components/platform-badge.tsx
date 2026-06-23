@@ -6,6 +6,7 @@ const labels: Record<string, { label: string; className: string }> = {
     label: "小红书",
     className: "bg-red-500 text-white hover:bg-red-600",
   },
+  tg: { label: "TG", className: "bg-blue-500 text-white hover:bg-blue-600" },
 };
 
 export default function PlatformBadge({ platform }: { platform: string }) {

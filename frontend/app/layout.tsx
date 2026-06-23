@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Providers from "@/components/providers";
 import ThemeToggle from "@/components/theme-toggle";
+import SettingsPanel from "@/components/settings-panel";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -31,7 +32,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
             <div className="max-w-screen-2xl mx-auto flex items-center justify-between px-4 h-14">
               <h1 className="font-semibold text-lg">私密收藏夹</h1>
-              <ThemeToggle />
+              <div className="flex items-center gap-1">
+                <SettingsPanel />
+                <ThemeToggle />
+              </div>
             </div>
           </header>
           <main className="flex-1 max-w-screen-2xl mx-auto w-full">

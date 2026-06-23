@@ -48,8 +48,9 @@ func main() {
 	dl := downloader.New(s, &cfg)
 
 	h := &api.Handler{
-		Store:   s,
-		Enqueue: downloader.Enqueue(dl.Queue()),
+		Store:     s,
+		MediaRoot: cfg.MediaRoot,
+		Enqueue:   downloader.Enqueue(dl.Queue()),
 	}
 	router := api.SetupRouter(h, &cfg)
 

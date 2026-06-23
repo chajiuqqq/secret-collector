@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -215,4 +216,70 @@ func (s *Store) SoftDeletePost(ctx context.Context, id int64) (bool, error) {
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
+}
+
+type TgMedia struct {
+	Kind        string
+	LocalPath   string
+	ContentType string
+	SizeBytes   int64
+	Width       *int
+	Height      *int
+}
+
+type TgPost struct {
+	ChatID     int64
+	MessageID  int64
+	AuthorName string
+	Content    string
+	PostedAt   *time.Time
+	Media      []TgMedia
+}
+
+type TgScanResult struct {
+	PostsCreated int
+	PostsSkipped int
+	MediaFound   int
+	MediaMissing int
+	Errors       []string
+}
+
+func (s *Store) CreateTgPosts(ctx context.Context, posts []TgPost) (TgScanResult, error) {
+	var res TgScanResult
+	err := pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+		for _, p := range posts {
+			originalURL := fmt.Sprintf("tg://%d/%d", p.ChatID, p.MessageID)
+			var postID int64
+			err := tx.QueryRow(ctx, `
+				INSERT INTO posts (platform, original_url, author_name, content, posted_at)
+				VALUES ('tg', $1, $2, $3, $4)
+				ON CONFLICT (platform, original_url) DO NOTHING
+				RETURNING id`,
+				originalURL, p.AuthorName, p.Content, p.PostedAt,
+			).Scan(&postID)
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					res.PostsSkipped++
+					continue
+				}
+				res.Errors = append(res.Errors, fmt.Sprintf("post %d/%d: %v", p.ChatID, p.MessageID, err))
+				continue
+			}
+			res.PostsCreated++
+
+			for i, m := range p.Media {
+				_, err := tx.Exec(ctx, `
+					INSERT INTO media (post_id, kind, position, original_url, status, local_path, content_type, size_bytes, width, height)
+					VALUES ($1, $2, $3, '', 'downloaded', $4, $5, $6, $7, $8)`,
+					postID, m.Kind, i, m.LocalPath, m.ContentType, m.SizeBytes, m.Width, m.Height)
+				if err != nil {
+					res.Errors = append(res.Errors, fmt.Sprintf("media %s: %v", m.LocalPath, err))
+				} else {
+					res.MediaFound++
+				}
+			}
+		}
+		return nil
+	})
+	return res, err
 }

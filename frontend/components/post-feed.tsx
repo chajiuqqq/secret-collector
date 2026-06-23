@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PostItem } from "@/lib/types";
 import { fetchPosts, deletePost } from "@/lib/api";
 import PostCard from "./post-card";
 import MediaLightbox from "./media-lightbox";
+import TagBar from "./tag-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function PostFeed({
@@ -23,6 +24,16 @@ export default function PostFeed({
     url: string;
     kind: "image" | "video";
   } | null>(null);
+
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+
+  const filteredPosts = useMemo(() => {
+    if (!activeTag) return posts;
+    if (activeTag === "x" || activeTag === "xiaohongshu" || activeTag === "tg") {
+      return posts.filter((p) => p.platform === activeTag);
+    }
+    return posts.filter((p) => p.content.includes(activeTag));
+  }, [posts, activeTag]);
 
   const loadMore = useCallback(async () => {
     if (loading || !hasMore) return;
@@ -64,8 +75,9 @@ export default function PostFeed({
 
   return (
     <>
+      <TagBar posts={posts} activeTag={activeTag} onTagChange={setActiveTag} />
       <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-4 p-4">
-        {posts.map((post) => (
+        {filteredPosts.map((post) => (
           <div key={post.id} className="break-inside-avoid mb-4">
             <PostCard
               post={post}
@@ -82,7 +94,12 @@ export default function PostFeed({
           ))}
       </div>
       <div ref={sentinel} className="h-1" />
-      {!hasMore && posts.length > 0 && (
+      {filteredPosts.length === 0 && posts.length > 0 && (
+        <p className="text-center text-muted-foreground py-8 text-sm">
+          没有匹配的帖子
+        </p>
+      )}
+      {!hasMore && filteredPosts.length > 0 && (
         <p className="text-center text-muted-foreground py-8 text-sm">
           没有更多了
         </p>
