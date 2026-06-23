@@ -274,7 +274,7 @@ func (s *Store) CreateTgPosts(ctx context.Context, posts []TgPost) (TgScanResult
 			var postID int64
 			err := tx.QueryRow(ctx, `
 				INSERT INTO posts (platform, original_url, author_name, content, posted_at, captured_at, blurred)
-				VALUES ('tg', $1, $2, $3, $4, true)
+				VALUES ('tg', $1, $2, $3, $4, $5, true)
 				ON CONFLICT (platform, original_url) DO NOTHING
 				RETURNING id`,
 				originalURL, p.AuthorName, p.Content, p.PostedAt,
