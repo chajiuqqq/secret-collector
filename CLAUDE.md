@@ -18,25 +18,30 @@ docker compose up -d --build
 # Start postgres
 docker run -d --name capture-pg -e POSTGRES_USER=capture -e POSTGRES_PASSWORD=capture -e POSTGRES_DB=capture -p 5432:5432 postgres:17-alpine
 
-# Backend (Go)
+# Backend (Go) — run from backend/ directory
+cd backend
 DATABASE_URL="postgres://capture:capture@localhost:5432/capture?sslmode=disable" \
 MEDIA_ROOT=/tmp/capture-media \
 go run ./cmd/server
 
-# Frontend (Next.js)
+# Frontend (Next.js) — run from frontend/ directory
+cd frontend
 BACKEND_INTERNAL_URL=http://localhost:8080 npm run dev
 ```
 
 ## Architecture
 
-Dual-project: **Go backend** (`backend/`) serves a REST API and static `/media/` files, backed by PostgreSQL. **Next.js frontend** (`frontend/`) renders a masonry waterfall UI. The frontend never hits the database directly — all data goes through the backend API. Next.js rewrites `/api/*` and `/media/*` to the backend, so the browser uses relative URLs.
+Dual-project: **Go backend** (`backend/`) REST API + static `/media/` on `:8080`. **Next.js 16 frontend** (`frontend/`) SSR + client waterfall UI on `:3000`. Frontend never hits DB directly — all data through backend API.
 
 ```
 POST /api/posts JSON ──→ Go Backend :8080 ──→ PostgreSQL
                               │
                               ├── Async download workers (4 concurrent, 30s retry scan)
-                              ├── GET /api/posts (keyset pagination)
-                              ├── DELETE /api/posts/:id (soft delete)
+                              ├── GET /api/posts (keyset pagination, ?tag= filter)
+                              ├── DELETE /api/posts/:id (soft delete, decrements tags)
+                              ├── POST /api/tg/scan (async, SSE progress)
+                              ├── GET /api/tg/scan/progress (SSE)
+                              ├── GET /api/tags (server-maintained tag list)
                               └── GET /media/* (static files)
 
 Next.js :3000 ──rewrites──→ Backend
@@ -44,48 +49,53 @@ Next.js :3000 ──rewrites──→ Backend
 
 ### Backend (`backend/`)
 
-- **`cmd/server/main.go`** — Entry point: connects to PG, runs migrations, starts downloader pool, starts Gin HTTP server with graceful shutdown.
-- **`internal/config/config.go`** — Reads env vars with defaults (DATABASE_URL, MEDIA_ROOT, DOWNLOAD_WORKERS, etc.).
-- **`internal/store/`** — Database layer using `pgxpool`. `store.go` has connection setup and migration runner (embedded SQL files sorted by name). `posts.go` has CreatePost (upsert on `platform + original_url`), ListPosts (keyset cursor pagination with media eager-loading), and SoftDeletePost. `media.go` has atomic claim/downloaded/failed/reset operations with exponential backoff retry logic.
-- **`internal/api/`** — Gin HTTP handlers. `router.go` sets up routes and CORS middleware. `posts.go` handles CRUD with validation. `dto.go` defines request/response types. `cors.go` parses the comma-separated CORS_ORIGINS env var (supports `*` wildcard).
-- **`internal/downloader/`** — Async media download pool. Workers pull from a buffered channel (cap 1024). A scanner goroutine runs every 30s to find retryable media and reset stuck `downloading` rows. `fetch.go` does the actual HTTP download: SHA256 hashing, temp file → rename, width/height decoding for images, Referer header injection for xhscdn.com domains.
-- **`internal/migrations/`** — Embedded SQL migration files. `001_init.sql` creates `posts` and `media` tables with constraints. `002_soft_delete.sql` adds `deleted_at` column and a filtered index for active posts.
+| Path | Purpose |
+|------|---------|
+| `cmd/server/main.go` | Entry: connects PG, runs migrations, backfills tags, starts downloader pool + Gin with graceful shutdown |
+| `internal/config/config.go` | Env vars: DATABASE_URL, MEDIA_ROOT, DOWNLOAD_WORKERS, CORS_ORIGINS, etc. |
+| `internal/store/store.go` | `pgxpool` init + embedded migration runner (sorted `.sql` files) |
+| `internal/store/posts.go` | CreatePost (upsert), ListPosts (keyset cursor + `?tag=` SQL filter), SoftDeletePost (returns platform+content), CreateTgPosts (batch insert with blurred=true), UpsertTags/DecrementTags/BackfillTags, ListTags |
+| `internal/store/media.go` | Atomic claim/downloaded/failed/reset, exponential backoff retry |
+| `internal/api/router.go` | Routes + CORS middleware |
+| `internal/api/posts.go` | CRUD handlers |
+| `internal/api/tg.go` | TgScan (creates async task), runScan (groups messages by date, hardlinks media, creates posts with zero-media guard), parseDate, linkTgMedia, video-by-ext detection |
+| `internal/api/tg_scan_task.go` | In-memory task state (mutex-guarded, single concurrent), SSE progress streaming (300ms ticker) |
+| `internal/api/tags.go` | GET /api/tags handler |
+| `internal/api/dto.go` | Request/response types |
+| `internal/downloader/` | Async download pool: workers claim media rows, SHA256-hash, rename into MEDIA_ROOT tree |
 
 ### Frontend (`frontend/`)
 
-- Built with **Next.js 16** (standalone output mode) — read `frontend/node_modules/next/dist/docs/` if unsure about API changes.
-- **`app/page.tsx`** — Server component that fetches the first page (SSR `force-dynamic`), then hands off to `PostFeed` client component for infinite scroll.
-- **`app/layout.tsx`** — Root layout with Geist fonts, sticky header, next-themes Provider, and ThemeToggle.
-- **`lib/api.ts`** — `fetchPosts` and `deletePost` helpers. On the server, uses `BACKEND_INTERNAL_URL` for direct backend calls. On the client, uses relative paths (proxied by Next.js rewrites).
-- **`components/post-feed.tsx`** — Main client component: CSS columns waterfall, IntersectionObserver infinite scroll, skeleton loading, delete with optimistic UI removal, lightbox state.
-- **`components/post-card.tsx`** — Card layout: media at top, avatar + author name + platform badge + relative time in header, linked content text body, red delete button (absolute positioned, hover-visible on card).
-- **`components/post-media.tsx`** — Media rendering with status handling: skeleton for pending/downloading, error state for failed. Images respect aspect ratio. Videos auto-play when visible (IntersectionObserver). Single media renders full-width; 2-4 items in a 2-col grid; >4 items in a scroll-snap carousel with dot indicators.
-- **`components/media-lightbox.tsx`** — Full-screen overlay for images/videos (ESC or backdrop click to close).
+Built with **Next.js 16** (standalone output, Turbopack). Production is `next build` → `node server.js` — **no hot reload**; rebuild after every change.
+
+| Path | Purpose |
+|------|---------|
+| `app/page.tsx` | SSR first page (`force-dynamic`), hands off to PostFeed |
+| `app/layout.tsx` | Root: fonts, theme, NSFWProvider, SettingsPanel, ThemeToggle |
+| `lib/api.ts` | fetchPosts (tag param), fetchTags, deletePost, startTgScan, watchScanProgress (EventSource SSE) |
+| `lib/types.ts` | PostItem (blurred field), MediaItem, TgScanProgress, TagItem, etc. |
+| `components/post-feed.tsx` | CSS columns waterfall, IntersectionObserver infinite scroll, tag change resets posts from backend |
+| `components/post-card.tsx` | Media + avatar + platform badge + blur toggle (eye icon, hidden in NSFW mode) |
+| `components/post-media.tsx` | Image/video rendering with blur support (CSS filter), carousel for >4 items |
+| `components/tag-bar.tsx` | Fetches from GET /api/tags, fixed X/小红书/TG always first |
+| `components/settings-panel.tsx` | TG scan controls + progress bar + NSFW toggle |
+| `components/nsfw-context.tsx` | React context + localStorage — when on, all blur disabled |
 
 ### Database
 
-- **posts**: `id`, `platform` (x/xiaohongshu), `original_url` (UNIQUE), `author_name`, `author_avatar_url`, `avatar_media_id → media`, `content`, `posted_at`, `captured_at`, `deleted_at`
-- **media**: `id`, `post_id → posts`, `kind` (image/video/avatar), `position`, `original_url`, `status` (pending/downloading/downloaded/failed), `local_path`, `content_type`, `size_bytes`, `width`, `height`, `sha256`, `attempts`, `last_error`
-- Keyset pagination on `(captured_at DESC, id DESC) WHERE deleted_at IS NULL`
-- Soft delete: `deleted_at` timestamp, filtered out by the active index
+- **posts**: `id`, `platform` (x/xiaohongshu/tg), `original_url` (UNIQUE with platform), `author_name`, `content`, `blurred` (default false, TG=true), `posted_at`, `captured_at` (keyset cursor), `deleted_at`
+- **media**: `id`, `post_id → posts`, `kind` (image/video/avatar), `status` (pending/downloading/downloaded/failed), `local_path`, `content_type`, `size_bytes`, `width`, `height`, `sha256`
+- **tags**: `id`, `name` (UNIQUE), `post_count` — maintained on post create/delete, backfilled on startup
+- Keyset pagination: `ORDER BY captured_at DESC, id DESC WHERE deleted_at IS NULL`
+- Migrations: `001_init`, `002_soft_delete`, `003_tg_platform`, `004_post_blurred` (blurred column + tags table)
 
-### Media download flow
+### TG scan flow
 
-1. POST creates post + media rows (status `pending`), enqueues media IDs.
-2. Worker claims a row atomically (status → `downloading`).
-3. Downloads to temp file, SHA256-hashes, renames to `{platform}/{YYYY/MM/DD}/{sha256[:2]}/{sha256}.{ext}`.
-4. On success: status → `downloaded`, local_path + metadata set.
-5. On failure: status → `failed`, last_error set. Retried up to 5 times with exponential backoff (`5^(attempts-1)` minutes).
-6. Crash recovery: startup resets `downloading` → `pending`. Scanner runs every 30s picking up pending + retryable-failed media.
-
-### Environment variables
-
-Backend: `DATABASE_URL`, `MEDIA_ROOT` (default `/data/media`), `LISTEN_ADDR` (`:8080`), `DOWNLOAD_WORKERS` (4), `DOWNLOAD_TIMEOUT` (120s), `MAX_MEDIA_BYTES` (500MB), `CORS_ORIGINS` (`*`).
-Frontend: `BACKEND_INTERNAL_URL` (`http://backend:8080`) — used for SSR and rewrites; never exposed to the browser.
+1. `POST /api/tg/scan` → creates async task, returns `task_id` immediately (409 if already running)
+2. `GET /api/tg/scan/progress` → SSE events every 300ms (phase: parsing→linking→writing, counts)
+3. Backend: reads JSON index, groups messages by `date` field (same date = one post), hardlinks files from media_dir into MEDIA_ROOT/tg/YYYY/MM/DD/{chatID}_{messageID}_{filename}, skips groups with zero media found
 
 ## Production environment
-
-See `运维手册.md` for full details.
 
 | | |
 |---|---|
@@ -93,62 +103,41 @@ See `运维手册.md` for full details.
 | Project path | `/vol2/1000/secret-collector` |
 | Media storage | `/vol1/1000/capture` |
 | Docker | May require `sg docker -c "..."` |
+| Proxy | `export https_proxy=http://100.85.18.9:7890` before git pull |
 
 ```bash
-# Check status
-cd /vol2/1000/secret-collector && docker compose ps
-
-# Restart
-docker compose restart [backend|frontend|postgres]
+# Deploy
+ssh chajiuqqq@100.114.94.119 'export https_proxy=http://100.85.18.9:7890 && cd /vol2/1000/secret-collector && git pull && sg docker -c "docker compose up -d --build"'
 
 # Logs
-docker compose logs -f backend
-docker compose logs --tail=50
+ssh chajiuqqq@100.114.94.119 'cd /vol2/1000/secret-collector && sg docker -c "docker compose logs --tail=50 backend"'
 
-# Update & rebuild
-git pull && docker compose up -d --build
+# DB shell
+ssh chajiuqqq@100.114.94.119 'docker exec secret-collector-postgres-1 psql -U capture -d capture'
+
+# Rebuild frontend only (no --no-cache needed unless caching issue)
+ssh chajiuqqq@100.114.94.119 'cd /vol2/1000/secret-collector && git pull && sg docker -c "docker compose build frontend && docker compose up -d frontend"'
 ```
-
-### Common SQL (connect via `docker exec -it secret-collector-postgres-1 psql -U capture -d capture`)
-
-```sql
--- Post counts
-SELECT platform, COUNT(*) FROM posts WHERE deleted_at IS NULL GROUP BY platform;
-
--- Media status distribution
-SELECT status, COUNT(*) FROM media GROUP BY status;
-
--- Reset all failed media for retry
-UPDATE media SET status = 'pending', attempts = 0, last_error = NULL WHERE status = 'failed';
-```
-
-### Troubleshooting
-
-- **Frontend down**: `docker compose logs frontend`, then check `curl http://localhost:8080/healthz`
-- **Media download failures**: check backend logs `docker compose logs backend | grep -i error`, then reset failed rows
-- **DB connection failure**: wait for postgres healthy (`docker compose ps`), then restart backend
 
 ## Common commands
 
 ```bash
-# Backend
-go run ./cmd/server                          # run backend
-go build -o /dev/null ./...                  # compile check
-DATABASE_URL="..." go run ./cmd/server       # with custom PG
-
-# Frontend
-npm run dev          # Next.js dev server
-npm run build        # production build
-npm run lint         # ESLint
-
 # Docker
 docker compose up -d --build                 # full stack
-docker compose logs -f backend               # backend logs
+docker compose build backend                 # backend only
+docker compose build frontend                # frontend only
 docker compose exec postgres psql -U capture -d capture  # DB shell
 
+# Go (from backend/)
+go build -o /dev/null ./...                  # compile check
+
+# Frontend (from frontend/)
+npm run dev          # dev server (hot reload for local dev only)
+
 # API
-curl -X POST http://localhost:8080/api/posts -H "Content-Type: application/json" -d '{...}'
-curl "http://localhost:8080/api/posts?limit=20"
+curl -X POST http://localhost:8080/api/tg/scan -H "Content-Type: application/json" -d '{"index_path":"/tg-index/tg-saved-full.json","media_dir":"/tg-media"}'
+curl "http://localhost:8080/api/posts?limit=20&tag=tg"
+curl "http://localhost:8080/api/tags"
 curl -X DELETE "http://localhost:8080/api/posts/1"
 ```
 
