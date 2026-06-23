@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -64,6 +65,7 @@ func (h *Handler) CreatePost(c *gin.Context) {
 func (h *Handler) ListPosts(c *gin.Context) {
 	var q struct {
 		Limit  int    `form:"limit"`
+		Tag    string `form:"tag"`
 		Cursor string `form:"cursor"`
 	}
 	if err := c.ShouldBindQuery(&q); err != nil {
@@ -74,7 +76,7 @@ func (h *Handler) ListPosts(c *gin.Context) {
 		q.Limit = defaultLimit
 	}
 
-	posts, nextCursor, err := h.Store.ListPosts(c.Request.Context(), q.Limit, q.Cursor)
+	posts, nextCursor, err := h.Store.ListPosts(c.Request.Context(), q.Limit, q.Cursor, q.Tag)
 	if err != nil {
 		slog.Error("list posts", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list posts"})
@@ -122,6 +124,7 @@ func (h *Handler) ListPosts(c *gin.Context) {
 			AuthorAvatarURL: avatarURL,
 			Content:         p.Content,
 			PostedAt:        p.PostedAt,
+			Blurred:         p.Blurred,
 			CapturedAt:      p.CapturedAt,
 			Media:           media,
 		}
@@ -140,7 +143,7 @@ func (h *Handler) DeletePost(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
 	}
-	ok, err := h.Store.SoftDeletePost(c.Request.Context(), id)
+	ok, platform, content, err := h.Store.SoftDeletePost(c.Request.Context(), id)
 	if err != nil {
 		slog.Error("soft delete", "id", id, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "delete failed"})
@@ -150,5 +153,11 @@ func (h *Handler) DeletePost(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
+		// Decrement tags in background (best-effort)
+		go func() {
+			if err := h.Store.DecrementPostTags(context.Background(), platform, content); err != nil {
+				slog.Error("decrement tags", "id", id, "error", err)
+			}
+		}()
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }

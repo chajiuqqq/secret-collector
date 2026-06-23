@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { NSFWProvider } from "@/components/nsfw-context";
 import Providers from "@/components/providers";
 import ThemeToggle from "@/components/theme-toggle";
 import SettingsPanel from "@/components/settings-panel";
@@ -29,7 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
-        <Providers>
+        <Providers><NSFWProvider>
           <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
             <div className="max-w-screen-2xl mx-auto flex items-center justify-between px-4 h-14">
               <h1 className="font-semibold text-lg">私密收藏夹</h1>
@@ -43,7 +44,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <main className="flex-1 max-w-screen-2xl mx-auto w-full">
             {children}
           </main>
-        </Providers>
+        </NSFWProvider></Providers>
       </body>
     </html>
   );

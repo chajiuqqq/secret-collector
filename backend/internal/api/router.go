@@ -24,6 +24,7 @@ func SetupRouter(h *Handler, cfg *config.Config) *gin.Engine {
 		api.GET("/tg/scan/progress", h.TgScanProgress)
 		api.POST("/capture", h.Capture)
 		api.GET("/capture/progress", h.CaptureProgress)
+		api.GET("/tags", h.ListTags)
 	}
 
 	r.GET("/healthz", func(c *gin.Context) {

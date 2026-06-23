@@ -162,7 +162,6 @@ curl -X DELETE "http://localhost:8080/api/posts/1"
 验证是否真的生效：standalone 镜像里**找不到** `.tsx` 源文件（只有编译产物），所以无法 `docker exec ... grep` 直接验证；要用 `curl http://localhost:3000 | grep <新增字符串>` 之类的间接方式。
 
 ### Header 的 backdrop-blur 会困住 position:fixed
-`app/layout.tsx` 的 `<header>` 带 `backdrop-blur` —— 这个 CSS 属性会**创建 containing block**，导致它内部任何 `position: fixed` 元素以 header 为基准而不是 viewport，手机端就会溢出屏幕。
+`app/layout.tsx` 的 `<header>` 带 `backdrop-blur` —— 这个 CSS 属性会**创建 containing block**，导致它内部任何 `position: fixed` 元格以 header 为基准而不是 viewport，手机端就会溢出屏幕。
 
 所有需要 viewport-relative 定位的 popover / dialog / modal，**必须用 `createPortal(content, document.body)`** 渲染到 body 之下，绕开这个陷阱。参考 `frontend/components/capture-button.tsx` 的实现（含 iPhone X `env(safe-area-inset-bottom)` 适配）。
-

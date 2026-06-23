@@ -85,7 +85,7 @@ func (s *Store) CreatePost(ctx context.Context, p NewPost) (CreateResult, error)
 			}
 			res.MediaIDs = append(res.MediaIDs, avatarID)
 		}
-		return nil
+		tagNames := append([]string{p.Platform}, extractHashtags(p.Content)...); return upsertTags(ctx, tx, tagNames)
 	})
 	return res, err
 }
@@ -110,6 +110,7 @@ type Post struct {
 	AuthorAvatarURL *string
 	AvatarMediaID   *int64
 	Content         string
+	Blurred         bool
 	PostedAt        *time.Time
 	CapturedAt      time.Time
 	Media           []MediaItem
@@ -137,22 +138,37 @@ func DecodeCursor(cursor string) (time.Time, int64, error) {
 	return time.Unix(0, ns), id, nil
 }
 
-func (s *Store) ListPosts(ctx context.Context, limit int, cursor string) ([]Post, string, error) {
+
+func (s *Store) ListPosts(ctx context.Context, limit int, cursor, tag string) ([]Post, string, error) {
 	query := `
 		SELECT id, platform, original_url, author_name, author_avatar_url,
-		       avatar_media_id, content, posted_at, captured_at
+		       avatar_media_id, content, blurred, posted_at, captured_at
 		FROM posts
 		WHERE deleted_at IS NULL`
 	args := []any{}
+	n := 0
+	if tag != "" {
+		n++
+		if tag == "x" || tag == "xiaohongshu" || tag == "tg" {
+			query += fmt.Sprintf(` AND platform = $%d`, n)
+		} else {
+			query += fmt.Sprintf(` AND content LIKE '%%' || $%d || '%%'`, n)
+		}
+		args = append(args, tag)
+	}
 	if cursor != "" {
 		capturedAt, id, err := DecodeCursor(cursor)
 		if err != nil {
 			return nil, "", err
 		}
-		query += ` AND (captured_at, id) < ($1, $2)`
+		n++
+		query += fmt.Sprintf(` AND (captured_at, id) < ($%d, $%d)`, n, n+1)
 		args = append(args, capturedAt, id)
+		n++
 	}
-	query += fmt.Sprintf(` ORDER BY captured_at DESC, id DESC LIMIT %d`, limit+1)
+	n++
+	query += fmt.Sprintf(` ORDER BY captured_at DESC, id DESC LIMIT $%d`, n)
+	args = append(args, limit+1)
 
 	rows, err := s.Pool.Query(ctx, query, args...)
 	if err != nil {
@@ -161,7 +177,7 @@ func (s *Store) ListPosts(ctx context.Context, limit int, cursor string) ([]Post
 	posts, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Post, error) {
 		var p Post
 		err := row.Scan(&p.ID, &p.Platform, &p.OriginalURL, &p.AuthorName, &p.AuthorAvatarURL,
-			&p.AvatarMediaID, &p.Content, &p.PostedAt, &p.CapturedAt)
+			&p.AvatarMediaID, &p.Content, &p.Blurred, &p.PostedAt, &p.CapturedAt)
 		return p, err
 	})
 	if err != nil {
@@ -209,14 +225,20 @@ func (s *Store) ListPosts(ctx context.Context, limit int, cursor string) ([]Post
 	return posts, nextCursor, nil
 }
 
-func (s *Store) SoftDeletePost(ctx context.Context, id int64) (bool, error) {
-	tag, err := s.Pool.Exec(ctx,
-		`UPDATE posts SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL`, id)
+func (s *Store) SoftDeletePost(ctx context.Context, id int64) (bool, string, string, error) {
+	var platform, content string
+	err := s.Pool.QueryRow(ctx,
+		`UPDATE posts SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL
+		 RETURNING platform, content`, id).Scan(&platform, &content)
 	if err != nil {
-		return false, err
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, "", "", nil
+		}
+		return false, "", "", err
 	}
-	return tag.RowsAffected() > 0, nil
+	return true, platform, content, nil
 }
+
 
 type TgMedia struct {
 	Kind        string
@@ -229,7 +251,7 @@ type TgMedia struct {
 
 type TgPost struct {
 	ChatID     int64
-	MessageID  int64
+	Date       string
 	AuthorName string
 	Content    string
 	PostedAt   *time.Time
@@ -248,21 +270,21 @@ func (s *Store) CreateTgPosts(ctx context.Context, posts []TgPost) (TgScanResult
 	var res TgScanResult
 	err := pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
 		for _, p := range posts {
-			originalURL := fmt.Sprintf("tg://%d/%d", p.ChatID, p.MessageID)
+			originalURL := fmt.Sprintf("tg://%d/%s", p.ChatID, p.Date)
 			var postID int64
 			err := tx.QueryRow(ctx, `
-				INSERT INTO posts (platform, original_url, author_name, content, posted_at)
-				VALUES ('tg', $1, $2, $3, $4)
+				INSERT INTO posts (platform, original_url, author_name, content, posted_at, captured_at, blurred)
+				VALUES ('tg', $1, $2, $3, $4, $5, true)
 				ON CONFLICT (platform, original_url) DO NOTHING
 				RETURNING id`,
-				originalURL, p.AuthorName, p.Content, p.PostedAt,
+				originalURL, p.AuthorName, p.Content, p.PostedAt, p.PostedAt,
 			).Scan(&postID)
 			if err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					res.PostsSkipped++
 					continue
 				}
-				res.Errors = append(res.Errors, fmt.Sprintf("post %d/%d: %v", p.ChatID, p.MessageID, err))
+				res.Errors = append(res.Errors, fmt.Sprintf("post %d/%s: %v", p.ChatID, p.Date, err))
 				continue
 			}
 			res.PostsCreated++
@@ -278,8 +300,142 @@ func (s *Store) CreateTgPosts(ctx context.Context, posts []TgPost) (TgScanResult
 					res.MediaFound++
 				}
 			}
+
+			// Upsert tags for this post
+			tagNames := append([]string{"tg"}, extractHashtags(p.Content)...)
+			if err := upsertTags(ctx, tx, tagNames); err != nil {
+				res.Errors = append(res.Errors, fmt.Sprintf("tags: %v", err))
+			}
 		}
 		return nil
 	})
 	return res, err
+}
+func extractHashtags(content string) []string {
+	var tags []string
+	seen := map[string]bool{}
+	for _, word := range strings.Fields(content) {
+		if strings.HasPrefix(word, "#") && len(word) > 1 {
+			w := strings.TrimRight(word, ",.!?;:，。！？；：")
+			if !seen[w] {
+				seen[w] = true
+				tags = append(tags, w)
+			}
+		}
+	}
+	return tags
+}
+
+func upsertTags(ctx context.Context, tx pgx.Tx, names []string) error {
+	for _, name := range names {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO tags (name, post_count) VALUES ($1, 1)
+			ON CONFLICT (name) DO UPDATE SET post_count = tags.post_count + 1`, name)
+		if err != nil {
+			return fmt.Errorf("upsert tag %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func decrementTags(ctx context.Context, tx pgx.Tx, names []string) error {
+	for _, name := range names {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM tags WHERE name = $1 AND post_count <= 1`, name)
+		if err != nil {
+			return fmt.Errorf("decrement tag %s: %w", name, err)
+		}
+		if tag.RowsAffected() == 0 {
+			_, err = tx.Exec(ctx,
+				`UPDATE tags SET post_count = post_count - 1 WHERE name = $1`, name)
+			if err != nil {
+				return fmt.Errorf("decrement tag %s: %w", name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Store) DecrementPostTags(ctx context.Context, platform, content string) error {
+	tagNames := append([]string{platform}, extractHashtags(content)...)
+	return pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+		return decrementTags(ctx, tx, tagNames)
+	})
+}
+
+type TagItem struct {
+	Name      string `json:"name"`
+	PostCount int    `json:"post_count"`
+}
+
+func hasPrefix(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+
+func (s *Store) BackfillTags(ctx context.Context) error {
+	return pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `DELETE FROM tags`); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `SELECT platform, COALESCE(content, '') FROM posts WHERE deleted_at IS NULL`)
+		if err != nil {
+			return err
+		}
+		type row struct {
+			platform, content string
+		}
+		var all []row
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.platform, &r.content); err != nil {
+				rows.Close()
+				return err
+			}
+			all = append(all, r)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for _, r := range all {
+			names := append([]string{r.platform}, extractHashtags(r.content)...)
+			if err := upsertTags(ctx, tx, names); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *Store) ListTags(ctx context.Context) ([]TagItem, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT name, post_count FROM tags WHERE post_count > 0 ORDER BY post_count DESC, name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tags []TagItem
+	// Fixed platform tags always come first
+	fixed := map[string]int{"x": 0, "xiaohongshu": 0, "tg": 0}
+	seen := map[string]bool{}
+	for rows.Next() {
+		var t TagItem
+		if err := rows.Scan(&t.Name, &t.PostCount); err != nil {
+			return nil, err
+		}
+		seen[t.Name] = true
+		if _, isFixed := fixed[t.Name]; isFixed {
+			fixed[t.Name] = t.PostCount
+		} else {
+			tags = append(tags, t)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Prepend fixed platform tags in order (always shown, even if count=0)
+	fixedTags := make([]TagItem, 0, 3)
+	for _, p := range []string{"x", "xiaohongshu", "tg"} {
+		fixedTags = append(fixedTags, TagItem{Name: p, PostCount: fixed[p]})
+	}
+	return append(fixedTags, tags...), nil
 }

@@ -19,6 +19,7 @@ export interface PostItem {
   content: string;
   posted_at: string | null;
   captured_at: string;
+  blurred: boolean;
   media: MediaItem[];
 }
 
@@ -70,4 +71,9 @@ export interface CaptureTask {
   result?: CaptureResult;
   error?: string;
   started_at: string;
+}
+
+export interface TagItem {
+  name: string;
+  post_count: number;
 }

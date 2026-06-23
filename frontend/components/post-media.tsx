@@ -31,7 +31,7 @@ function useAutoplayVideo() {
   return ref;
 }
 
-function MediaImg({ m, onClick }: { m: MediaItem; onClick?: () => void }) {
+function MediaImg({ m, blurred, onClick }: { m: MediaItem; blurred?: boolean; onClick?: () => void }) {
   if (m.status === "pending" || m.status === "downloading") {
     return <Skeleton className="w-full h-48 rounded-lg" />;
   }
@@ -45,21 +45,24 @@ function MediaImg({ m, onClick }: { m: MediaItem; onClick?: () => void }) {
   const aspect = m.width && m.height ? `${m.width}/${m.height}` : "16/9";
   const src = mediaUrl(m.url);
   return (
-    <button onClick={onClick} className="w-full cursor-zoom-in block">
+    <button onClick={onClick} className="w-full cursor-zoom-in block relative">
       <img
         src={src}
         alt=""
         loading="lazy"
-        style={{ aspectRatio: aspect }}
+        style={{ aspectRatio: aspect, ...(blurred ? { filter: "blur(24px)" } : {}) }}
         className="w-full rounded-lg object-cover bg-muted"
       />
+      {blurred && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-white text-xs bg-black/50 rounded-full px-2 py-0.5">模糊</span>
+        </div>
+      )}
     </button>
   );
 }
 
-function MediaVideo({ m, onClick }: { m: MediaItem; onClick?: () => void }) {
-  const videoRef = useAutoplayVideo();
-
+function MediaVideo({ m, blurred, onClick }: { m: MediaItem; blurred?: boolean; onClick?: () => void }) {
   if (m.status === "pending" || m.status === "downloading") {
     return <Skeleton className="w-full h-48 rounded-lg" />;
   }
@@ -74,16 +77,20 @@ function MediaVideo({ m, onClick }: { m: MediaItem; onClick?: () => void }) {
   return (
     <div className="relative">
       <video
-        ref={videoRef}
         src={src}
         controls
         preload="none"
-        autoPlay
         muted
         loop
         playsInline
         className="w-full rounded-lg bg-black"
+        style={blurred ? { filter: "blur(24px)" } : undefined}
       />
+      {blurred && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span className="text-white text-xs bg-black/50 rounded-full px-2 py-0.5">模糊</span>
+        </div>
+      )}
       {onClick && (
         <button
           onClick={onClick}
@@ -99,10 +106,11 @@ function MediaVideo({ m, onClick }: { m: MediaItem; onClick?: () => void }) {
 
 interface Props {
   items: MediaItem[];
+  blurred?: boolean;
   onMediaClick?: (url: string, kind: "image" | "video") => void;
 }
 
-export default function PostMedia({ items, onMediaClick }: Props) {
+export default function PostMedia({ items, blurred, onMediaClick }: Props) {
   const media = items.filter((m) => m.kind !== "avatar");
   if (media.length === 0) return null;
 
@@ -122,14 +130,14 @@ export default function PostMedia({ items, onMediaClick }: Props) {
   if (media.length === 1) {
     const m = media[0];
     return m.kind === "video" ? (
-      <MediaVideo m={m} onClick={mkClick(m)} />
+      <MediaVideo m={m} blurred={blurred} onClick={mkClick(m)} />
     ) : (
-      <MediaImg m={m} onClick={mkClick(m)} />
+      <MediaImg m={m} blurred={blurred} onClick={mkClick(m)} />
     );
   }
 
   if (media.length > 4) {
-    return <MediaCarousel media={media} mkClick={mkClick} />;
+    return <MediaCarousel media={media} blurred={blurred} mkClick={mkClick} />;
   }
 
   return (
@@ -137,9 +145,9 @@ export default function PostMedia({ items, onMediaClick }: Props) {
       {media.slice(0, 4).map((m) => (
         <div key={m.id}>
           {m.kind === "video" ? (
-            <MediaVideo m={m} onClick={mkClick(m)} />
+            <MediaVideo m={m} blurred={blurred} onClick={mkClick(m)} />
           ) : (
-            <MediaImg m={m} onClick={mkClick(m)} />
+            <MediaImg m={m} blurred={blurred} onClick={mkClick(m)} />
           )}
         </div>
       ))}
@@ -149,9 +157,11 @@ export default function PostMedia({ items, onMediaClick }: Props) {
 
 function MediaCarousel({
   media,
+  blurred,
   mkClick,
 }: {
   media: MediaItem[];
+  blurred?: boolean;
   mkClick: (m: MediaItem) => (() => void) | undefined;
 }) {
   const [active, setActive] = useState(0);
@@ -178,9 +188,9 @@ function MediaCarousel({
               className="snap-center shrink-0 w-full"
             >
               {m.kind === "video" ? (
-                <MediaVideo m={m} onClick={mkClick(m)} />
+                <MediaVideo m={m} blurred={blurred} onClick={mkClick(m)} />
               ) : (
-                <MediaImg m={m} onClick={mkClick(m)} />
+                <MediaImg m={m} blurred={blurred} onClick={mkClick(m)} />
               )}
             </div>
           ))}
