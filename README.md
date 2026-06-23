@@ -2,16 +2,11 @@
 
 捕获和管理 X/Twitter、小红书、Telegram 收藏内容的私密收藏夹。无需任何第三方 API 配置，本地存储所有图片视频。
 
-瀑布流：
-![alt text](docs/aca5068742a821002aa71f6c326c5b8a.jpg)
+![alt text](docs/b6665cf5a3247085297b8e782bbd09ba.jpg)
 
-大图预览：
-![alt text](docs/95ec1f73b54a2633730b135f2ae84f88.jpg)
+![alt text](docs/cefa1d2fc59bab5dd1ae7e9963aa0a42.jpg)
 
-手机端：
-![alt text](docs/605387311dabcc7a415499ba41369250.jpg)
-![alt text](docs/c91f32a663892fa4d1d61fa179f2105f.jpg)
-
+![alt text](docs/dee1f46a8bc88e81d784fead4ac2bedc.jpg)
 ## 特色
 
 - **三平台支持** — X/Twitter、小红书、Telegram（Saved Messages JSON 导入）
