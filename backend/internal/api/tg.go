@@ -179,7 +179,7 @@ func (h *Handler) runScan(task *tgScanTask, req TgScanRequest) {
 			}
 
 			kind := "image"
-			if isVideo(msg.MediaType) {
+			if isVideo(msg.MediaType) || isVideoExt(msg.File) {
 				kind = "video"
 			}
 
@@ -282,6 +282,11 @@ func updateProgress(task *tgScanTask, found, missing, written, skipped int) {
 	task.Progress.PostsWritten = written
 	task.Progress.PostsSkipped = skipped
 	scanMu.Unlock()
+}
+
+func isVideoExt(fileName string) bool {
+	ext := strings.ToLower(filepath.Ext(fileName))
+	return ext == ".mp4" || ext == ".mov" || ext == ".webm" || ext == ".avi" || ext == ".mkv"
 }
 
 func isVideo(mediaType string) bool {
