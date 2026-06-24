@@ -67,18 +67,66 @@ type TgScanResponse struct {
 	Errors       []string `json:"errors,omitempty"`
 }
 
+// CaptureRequest accepts either a single URL (legacy) or a list. Both can be
+// set; they are merged and de-duplicated by normalize().
 type CaptureRequest struct {
-	URL string `json:"url" binding:"required,http_url"`
+	URL  string   `json:"url"`
+	URLs []string `json:"urls"`
 }
 
-type CaptureResponse struct {
-	TaskID string `json:"task_id"`
+// normalize returns the combined, trimmed, de-duplicated URL list.
+func (r CaptureRequest) normalize() []string {
+	seen := make(map[string]struct{})
+	var out []string
+	add := func(u string) {
+		for _, ch := range " \t\r\n" {
+			u = trimAll(u, byte(ch))
+		}
+		if u == "" {
+			return
+		}
+		if _, ok := seen[u]; ok {
+			return
+		}
+		seen[u] = struct{}{}
+		out = append(out, u)
+	}
+	if r.URL != "" {
+		add(r.URL)
+	}
+	for _, u := range r.URLs {
+		add(u)
+	}
+	return out
 }
 
-type CaptureResult struct {
-	PostID      int64  `json:"post_id"`
-	Platform    string `json:"platform"`
-	OriginalURL string `json:"original_url"`
-	Duplicated  bool   `json:"duplicated"`
-	MediaCount  int    `json:"media_count"`
+func trimAll(s string, c byte) string {
+	for len(s) > 0 && s[0] == c {
+		s = s[1:]
+	}
+	for len(s) > 0 && s[len(s)-1] == c {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+// CaptureTaskDTO is the wire-format projection of a queued capture Task.
+type CaptureTaskDTO struct {
+	ID         string     `json:"id"`
+	URL        string     `json:"url"`
+	Status     string     `json:"status"`
+	Phase      string     `json:"phase,omitempty"`
+	PostID     *int64     `json:"post_id,omitempty"`
+	Platform   string     `json:"platform,omitempty"`
+	Duplicated bool       `json:"duplicated"`
+	MediaCount int        `json:"media_count"`
+	Error      string     `json:"error,omitempty"`
+	Attempts   int        `json:"attempts"`
+	CreatedAt  time.Time  `json:"created_at"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+type CaptureTasksResponse struct {
+	Tasks []CaptureTaskDTO `json:"tasks"`
 }

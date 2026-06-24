@@ -60,6 +60,7 @@ func main() {
 		MediaRoot: cfg.MediaRoot,
 		Enqueue:   downloader.Enqueue(dl.Queue()),
 	}
+	h.CaptureQueue = api.NewQueue(h.BuildCaptureRunner(), h.BuildRetryMediaFunc())
 	router := api.SetupRouter(h, &cfg)
 
 	srv := &http.Server{

@@ -51,26 +51,23 @@ export interface TgScanProgress {
   posts_skipped: number;
 }
 
-export interface CaptureProgress {
-  phase: "detecting" | "fetching" | "filing" | "writing";
-  url: string;
-}
-
-export interface CaptureResult {
-  post_id: number;
-  platform: string;
-  original_url: string;
-  duplicated: boolean;
-  media_count: number;
-}
-
+// A single URL submitted to the capture queue. Lives in backend memory only
+// (sliding window of the most recent 50). Status transitions are pushed via
+// SSE on /api/capture/progress.
 export interface CaptureTask {
   id: string;
-  status: "running" | "done";
-  progress: CaptureProgress;
-  result?: CaptureResult;
+  url: string;
+  status: "queued" | "running" | "done" | "error";
+  phase?: "detecting" | "fetching" | "writing" | "";
+  post_id?: number;
+  platform?: string;
+  duplicated: boolean;
+  media_count: number;
   error?: string;
-  started_at: string;
+  attempts: number;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
 }
 
 export interface TagItem {

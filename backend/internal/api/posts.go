@@ -14,9 +14,10 @@ import (
 const defaultLimit = 20
 
 type Handler struct {
-	Store    *store.Store
-	MediaRoot string
-	Enqueue   func(ids []int64)
+	Store        *store.Store
+	MediaRoot    string
+	Enqueue      func(ids []int64)
+	CaptureQueue *Queue
 }
 
 func (h *Handler) CreatePost(c *gin.Context) {
@@ -153,11 +154,11 @@ func (h *Handler) DeletePost(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
-		// Decrement tags in background (best-effort)
-		go func() {
-			if err := h.Store.DecrementPostTags(context.Background(), platform, content); err != nil {
-				slog.Error("decrement tags", "id", id, "error", err)
-			}
-		}()
+	// Decrement tags in background (best-effort)
+	go func() {
+		if err := h.Store.DecrementPostTags(context.Background(), platform, content); err != nil {
+			slog.Error("decrement tags", "id", id, "error", err)
+		}
+	}()
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }

@@ -3,8 +3,6 @@ import type {
   TagItem,
   TgScanProgress,
   TgScanResponse,
-  CaptureProgress,
-  CaptureResult,
   CaptureTask,
 } from "./types";
 
@@ -99,11 +97,16 @@ export function watchScanProgress(
   return () => es.close();
 }
 
-export async function startCapture(url: string): Promise<{ task_id: string }> {
+// Submit one or more URLs to the capture queue. Returns the newly-created
+// task records (one per URL). Unsupported URLs come back already in
+// status="error" so the caller can render them uniformly.
+export async function startCapture(
+  urls: string[],
+): Promise<{ tasks: CaptureTask[] }> {
   const res = await fetch(apiPath("/api/capture"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({ urls }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -114,38 +117,42 @@ export async function startCapture(url: string): Promise<{ task_id: string }> {
   return res.json();
 }
 
-export function watchCaptureProgress(
-  onProgress: (p: CaptureProgress) => void,
-  onDone: (r: CaptureResult) => void,
-  onError: (e: string) => void,
+export async function fetchCaptureTasks(): Promise<CaptureTask[]> {
+  const res = await fetch(apiPath("/api/capture/tasks"), { cache: "no-store" });
+  if (!res.ok) return [];
+  const body = (await res.json()) as { tasks: CaptureTask[] };
+  return body.tasks ?? [];
+}
+
+// Subscribe to the full capture-task snapshot stream. The callback receives
+// the entire task list on every state transition (and ~3×/s heartbeat).
+// Returns an unsubscribe function.
+export function watchCaptureTasks(
+  onSnapshot: (tasks: CaptureTask[]) => void,
 ): () => void {
   const es = new EventSource(apiPath("/api/capture/progress"));
-
-  let done = false;
   es.addEventListener("progress", (e: MessageEvent) => {
-    if (done) return;
-    const task = JSON.parse(e.data) as CaptureTask;
-    onProgress(task.progress);
-    if (task.status === "done") {
-      done = true;
-      es.close();
-      if (task.error) {
-        onError(task.error);
-      } else if (task.result) {
-        onDone(task.result);
-      } else {
-        onError("任务结束但未返回结果");
-      }
+    try {
+      const body = JSON.parse(e.data) as { tasks: CaptureTask[] };
+      onSnapshot(body.tasks ?? []);
+    } catch {
+      // ignore malformed payload
     }
   });
-
-  es.onerror = () => {
-    if (done) return;
-    es.close();
-    onError("连接中断");
-  };
-
+  // Errors here are typically the EventSource auto-reconnecting; leave it.
   return () => es.close();
+}
+
+export async function retryCaptureTask(id: string): Promise<void> {
+  const res = await fetch(apiPath(`/api/capture/tasks/${id}/retry`), {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      (body as { error?: string }).error ?? `Retry error: ${res.status}`,
+    );
+  }
 }
 
 export async function fetchTags(): Promise<TagItem[]> {

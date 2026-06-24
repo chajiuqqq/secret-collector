@@ -67,6 +67,30 @@ func (s *Store) ResetStuckDownloading(ctx context.Context) (int64, error) {
 	return tag.RowsAffected(), nil
 }
 
+// ResetFailedMedia resets all failed-state media on the given post back to
+// 'pending' (attempts=0, last_error cleared) and returns the affected IDs so
+// the caller can re-enqueue them to the downloader pool.
+func (s *Store) ResetFailedMedia(ctx context.Context, postID int64) ([]int64, error) {
+	rows, err := s.Pool.Query(ctx, `
+		UPDATE media
+		SET status = 'pending', attempts = 0, last_error = NULL, updated_at = now()
+		WHERE post_id = $1 AND status = 'failed'
+		RETURNING id`, postID)
+	if err != nil {
+		return nil, fmt.Errorf("reset failed media for post %d: %w", postID, err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // FindRetryable returns media ids that are pending, or failed with backoff
 // elapsed (1m, 5m, 25m, ... = 5^(attempts-1) minutes) and attempts < maxAttempts.
 func (s *Store) FindRetryable(ctx context.Context, maxAttempts, limit int) ([]int64, error) {
