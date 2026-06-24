@@ -13,38 +13,46 @@ export default function CaptureButton({
   const [submitting, setSubmitting] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
 
-  const parseUrls = (raw: string): string[] =>
-    raw
-      .split(/[\n\r]+/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-
-  // Splits pasted text into one URL per line. Handles three common shapes:
-  //   • already newline-separated (passed through unchanged)
-  //   • space/comma/tab/semicolon-separated
-  //   • multiple URLs concatenated with no separator (split before each scheme)
-  // Any non-URL prose around the URLs is dropped — only http(s)?://… tokens
-  // survive. If the paste contains zero URL-shaped tokens we return null and
-  // the textarea handles it as a normal paste.
-  const splitPastedUrls = (raw: string): string[] | null => {
-    const trimmed = raw.trim();
-    if (!trimmed) return null;
-    const matches = trimmed.match(/https?:\/\/\S+/gi);
-    if (!matches || matches.length === 0) return null;
-    // Strip trailing punctuation that often clings to copy-pasted URLs.
-    return matches.map((u) => u.replace(/[),.;]+$/, ""));
+  // parseUrls = newline split + per-line http(s)://-extraction.
+  // Rule: a line containing ANY http(s):// token is replaced by just those
+  // tokens (one per URL). A line with no URL token is kept as-is so genuinely
+  // empty / freeform text still surfaces as a (failing) task instead of
+  // silently dropping.
+  //
+  // Concatenated URLs without separator (e.g. "https://a/1https://b/2") are
+  // handled by injecting a space before every non-leading "http(s)://" before
+  // matching — `\S+` would otherwise greedily swallow both into one token.
+  //
+  // Trailing punctuation often dragged along when copy-pasting is stripped.
+  const parseUrls = (raw: string): string[] => {
+    const out: string[] = [];
+    for (const line of raw.split(/[\n\r]+/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const normalized = trimmed.replace(/(\S)(https?:\/\/)/gi, "$1 $2");
+      const matches = normalized.match(/https?:\/\/\S+/gi);
+      if (matches && matches.length > 0) {
+        for (const u of matches) {
+          out.push(u.replace(/[),.;]+$/, ""));
+        }
+      } else {
+        out.push(trimmed);
+      }
+    }
+    return out;
   };
 
+  // Paste handler: when the pasted text would parse to ≥2 URLs, rewrite the
+  // textarea so the user sees them on separate lines (visual feedback). The
+  // actual submission uses parseUrls regardless of how the text got in.
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const pasted = e.clipboardData.getData("text");
-    const urls = splitPastedUrls(pasted);
-    if (!urls || urls.length < 2) return; // let the browser handle single URL / non-URL
+    const urls = parseUrls(pasted);
+    if (urls.length < 2) return; // let browser handle single / empty paste
     e.preventDefault();
     const target = e.currentTarget;
     const before = text.slice(0, target.selectionStart);
     const after = text.slice(target.selectionEnd);
-    // Ensure the inserted block starts/ends on its own line when there's
-    // surrounding text.
     const sep = before && !before.endsWith("\n") ? "\n" : "";
     const tail = after && !after.startsWith("\n") ? "\n" : "";
     setText(before + sep + urls.join("\n") + tail + after);
