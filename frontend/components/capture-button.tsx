@@ -19,6 +19,37 @@ export default function CaptureButton({
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
 
+  // Splits pasted text into one URL per line. Handles three common shapes:
+  //   • already newline-separated (passed through unchanged)
+  //   • space/comma/tab/semicolon-separated
+  //   • multiple URLs concatenated with no separator (split before each scheme)
+  // Any non-URL prose around the URLs is dropped — only http(s)?://… tokens
+  // survive. If the paste contains zero URL-shaped tokens we return null and
+  // the textarea handles it as a normal paste.
+  const splitPastedUrls = (raw: string): string[] | null => {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    const matches = trimmed.match(/https?:\/\/\S+/gi);
+    if (!matches || matches.length === 0) return null;
+    // Strip trailing punctuation that often clings to copy-pasted URLs.
+    return matches.map((u) => u.replace(/[),.;]+$/, ""));
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pasted = e.clipboardData.getData("text");
+    const urls = splitPastedUrls(pasted);
+    if (!urls || urls.length < 2) return; // let the browser handle single URL / non-URL
+    e.preventDefault();
+    const target = e.currentTarget;
+    const before = text.slice(0, target.selectionStart);
+    const after = text.slice(target.selectionEnd);
+    // Ensure the inserted block starts/ends on its own line when there's
+    // surrounding text.
+    const sep = before && !before.endsWith("\n") ? "\n" : "";
+    const tail = after && !after.startsWith("\n") ? "\n" : "";
+    setText(before + sep + urls.join("\n") + tail + after);
+  };
+
   const handleSubmit = async () => {
     const urls = parseUrls(text);
     if (urls.length === 0 || submitting) return;
@@ -76,6 +107,7 @@ export default function CaptureButton({
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
+          onPaste={handlePaste}
           placeholder={"https://x.com/.../status/...\nhttp://xhslink.com/o/..."}
           rows={3}
           className="w-full px-3 py-2 text-sm border rounded-md bg-background mb-3 resize-y font-mono"
