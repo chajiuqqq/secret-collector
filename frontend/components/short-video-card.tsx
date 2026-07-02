@@ -191,7 +191,7 @@ export default function ShortVideoCard({ post, active, onDelete }: Props) {
           {media.map((m, i) => (
             <div
               key={m.id}
-              className="relative h-full w-full snap-center shrink-0"
+              className="relative h-full w-full snap-center [scroll-snap-stop:always] shrink-0"
             >
               {m.kind === "video" ? (
                 <VideoPage
