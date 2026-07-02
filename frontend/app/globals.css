@@ -157,3 +157,21 @@
 .animate-fade-in {
   animation: fade-in 0.18s ease-out;
 }
+
+/* Short-video mode: force Vidstack video to fill the full-screen card.
+   base.css only gives the <video> height:100% in fullscreen, so we override
+   here to make it fill the card with object-fit:contain (letterboxed). */
+.short-video-player[data-media-player] {
+  height: 100%;
+  width: 100%;
+  aspect-ratio: auto;
+}
+.short-video-player [data-media-provider] {
+  height: 100%;
+  aspect-ratio: auto;
+}
+.short-video-player [data-media-provider] video {
+  height: 100%;
+  width: 100%;
+  object-fit: contain;
+}

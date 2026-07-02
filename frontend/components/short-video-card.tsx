@@ -1,5 +1,6 @@
 "use client";
 
+import "@vidstack/react/player/styles/base.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   MediaPlayer,
@@ -103,13 +104,12 @@ function VideoPage({
 
   return (
     <MediaPlayer
-      className="h-full w-full"
+      className="short-video-player h-full w-full"
       src={src}
       autoPlay={active}
       muted
       loop
       playsInline
-      load="play"
     >
       <MediaProvider />
       <VideoControls active={active} />
