@@ -6,6 +6,8 @@ import { fetchPosts, deletePost } from "@/lib/api";
 import PostCard from "./post-card";
 import MediaLightbox from "./media-lightbox";
 import TagBar from "./tag-bar";
+import ShortVideoFeed from "./short-video-feed";
+import { useViewMode } from "./view-mode-context";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function PostFeed({
@@ -27,6 +29,7 @@ export default function PostFeed({
 
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const activeTagRef = useRef<string | null>(null);
+  const { mode } = useViewMode();
 
   const handleTagChange = useCallback((tag: string | null) => {
     setActiveTag(tag);
@@ -62,6 +65,7 @@ export default function PostFeed({
   }, [loading, hasMore]);
 
   useEffect(() => {
+    if (mode !== "waterfall") return;
     if (!sentinel.current || !hasMore) return;
     const el = sentinel.current;
     const obs = new IntersectionObserver(
@@ -72,7 +76,7 @@ export default function PostFeed({
     );
     obs.observe(el);
     return () => obs.disconnect();
-  }, [hasMore, loadMore]);
+  }, [hasMore, loadMore, mode]);
 
   const handleDelete = useCallback((id: number) => {
     setPosts((p) => p.filter((post) => post.id !== id));
@@ -85,6 +89,30 @@ export default function PostFeed({
     },
     [],
   );
+
+  if (mode === "short") {
+    return (
+      <div className="flex h-[calc(100dvh-3.5rem)] flex-col">
+        <TagBar activeTag={activeTag} onTagChange={handleTagChange} />
+        <div className="min-h-0 flex-1">
+          <ShortVideoFeed
+            posts={posts}
+            loading={loading}
+            hasMore={hasMore}
+            loadMore={loadMore}
+            onDelete={handleDelete}
+          />
+        </div>
+        {lightbox && (
+          <MediaLightbox
+            url={lightbox.url}
+            kind={lightbox.kind}
+            onClose={() => setLightbox(null)}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <>
