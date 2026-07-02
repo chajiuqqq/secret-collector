@@ -30,12 +30,25 @@ function timeAgo(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("zh-CN");
 }
 
-/** Vidstack controls + progress bar. Must be rendered inside <MediaPlayer>. */
+function formatTime(sec: number): string {
+  if (!Number.isFinite(sec) || sec < 0) return "00:00";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+/** Vidstack controls + gestures. Must be rendered inside <MediaPlayer>. */
 function VideoControls({ active }: { active: boolean }) {
   const remote = useMediaRemote();
   const currentTime = useMediaState("currentTime");
   const duration = useMediaState("duration");
   const paused = useMediaState("paused");
+
+  // Keep latest values for use in async tap/seek handlers (avoid stale closures).
+  const currentTimeRef = useRef(currentTime);
+  currentTimeRef.current = currentTime;
+  const durationRef = useRef(duration);
+  durationRef.current = duration;
 
   useEffect(() => {
     if (active) {
@@ -45,25 +58,131 @@ function VideoControls({ active }: { active: boolean }) {
     }
   }, [active, remote]);
 
-  const progress =
-    duration > 0 ? Math.min(1, currentTime / duration) : 0;
+  // --- Tap gesture: single = toggle play/pause, double = seek ±3s (left/right) ---
+  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTap = useRef(0);
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
+  const [seekHint, setSeekHint] = useState<{ dir: "fwd" | "back"; key: number } | null>(null);
+  const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const onTap = useCallback((e: React.PointerEvent) => {
+    const now = Date.now();
+    if (now - lastTap.current < 280 && clickTimer.current) {
+      // double tap → seek ±3s based on left/right half
+      clearTimeout(clickTimer.current);
+      clickTimer.current = null;
+      lastTap.current = 0;
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const isRight = e.clientX - rect.left > rect.width / 2;
+      const t = currentTimeRef.current;
+      const d = durationRef.current;
+      const target = isRight ? Math.min(d, t + 3) : Math.max(0, t - 3);
+      remote.seek(target);
+      setSeekHint({ dir: isRight ? "fwd" : "back", key: now });
+      if (hintTimer.current) clearTimeout(hintTimer.current);
+      hintTimer.current = setTimeout(() => setSeekHint(null), 600);
+    } else {
+      lastTap.current = now;
+      clickTimer.current = setTimeout(() => {
+        clickTimer.current = null;
+        if (pausedRef.current) remote.play();
+        else remote.pause();
+      }, 280);
+    }
+  }, [remote]);
+
+  // --- Draggable progress bar ---
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const [dragTime, setDragTime] = useState(0);
+
+  const ratioFromEvent = (clientX: number) => {
+    const el = trackRef.current;
+    if (!el) return 0;
+    const rect = el.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  };
+
+  const onTrackDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const t = ratioFromEvent(e.clientX) * (durationRef.current || 0);
+    setDragging(true);
+    setDragTime(t);
+    remote.seeking(t);
+  };
+  const onTrackMove = (e: React.PointerEvent) => {
+    if (!dragging) return;
+    e.stopPropagation();
+    const t = ratioFromEvent(e.clientX) * (durationRef.current || 0);
+    setDragTime(t);
+    remote.seeking(t);
+  };
+  const onTrackUp = (e: React.PointerEvent) => {
+    if (!dragging) return;
+    e.stopPropagation();
+    const t = ratioFromEvent(e.clientX) * (durationRef.current || 0);
+    setDragging(false);
+    remote.seek(t);
+  };
+
+  const displayTime = dragging ? dragTime : currentTime;
+  const progress = duration > 0 ? Math.min(1, displayTime / duration) : 0;
 
   return (
     <>
+      {/* gesture layer: single tap = toggle, double tap = seek ±3s */}
+      <div className="absolute inset-0 z-0" onPointerUp={onTap} />
+
+      {/* seek hint */}
+      {seekHint && (
+        <div
+          key={seekHint.key}
+          className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center"
+        >
+          <span className="animate-fade-in rounded-full bg-black/50 px-3 py-1 text-sm text-white">
+            {seekHint.dir === "fwd" ? "3s »" : "« 3s"}
+          </span>
+        </div>
+      )}
+
       {/* center play/pause indicator */}
-      {!active || paused ? (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+      {(!active || paused) && (
+        <div className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center">
           <div className="rounded-full bg-black/40 p-4">
             <Play className="h-8 w-8 text-white" />
           </div>
         </div>
-      ) : null}
-      {/* progress bar */}
-      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/20">
+      )}
+
+      {/* progress bar + time */}
+      <div className="absolute inset-x-0 bottom-0 z-20 flex items-center gap-2 px-3 pb-2">
+        <span className="w-9 text-right text-[10px] tabular-nums text-white/80">
+          {formatTime(displayTime)}
+        </span>
         <div
-          className="h-full bg-white transition-[width] duration-150"
-          style={{ width: `${progress * 100}%` }}
-        />
+          ref={trackRef}
+          onPointerDown={onTrackDown}
+          onPointerMove={onTrackMove}
+          onPointerUp={onTrackUp}
+          onPointerCancel={onTrackUp}
+          className="relative flex h-3 flex-1 cursor-pointer touch-none items-center"
+        >
+          <div className="h-0.5 w-full rounded-full bg-white/20">
+            <div
+              className="h-full rounded-full bg-white"
+              style={{ width: `${progress * 100}%` }}
+            />
+          </div>
+          <div
+            className="absolute h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-white"
+            style={{ left: `${progress * 100}%` }}
+          />
+        </div>
+        <span className="w-9 text-[10px] tabular-nums text-white/80">
+          {formatTime(duration)}
+        </span>
       </div>
     </>
   );
@@ -213,7 +332,7 @@ export default function ShortVideoCard({ post, active, onDelete }: Props) {
 
       {/* page indicator */}
       {media.length > 1 && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 flex gap-1">
+        <div className="absolute top-3 left-1/2 z-30 flex -translate-x-1/2 gap-1">
           {media.map((_, i) => (
             <button
               key={i}
@@ -228,7 +347,7 @@ export default function ShortVideoCard({ post, active, onDelete }: Props) {
       )}
 
       {/* top-right action cluster */}
-      <div className="absolute top-3 right-3 z-10 flex flex-col gap-2">
+      <div className="absolute top-3 right-3 z-30 flex flex-col gap-2">
         {!nsfw && (
           <button
             onClick={() => setBlurred((b) => !b)}
