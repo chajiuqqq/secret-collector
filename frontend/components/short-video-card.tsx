@@ -10,7 +10,7 @@ import {
 } from "@vidstack/react";
 import { Play, Film, Trash2, Eye, EyeOff } from "lucide-react";
 import type { MediaItem, PostItem } from "@/lib/types";
-import { mediaUrl } from "@/lib/api";
+import { mediaUrl, recordView } from "@/lib/api";
 import { useNSFW } from "./nsfw-context";
 import PlatformBadge from "./platform-badge";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
@@ -283,6 +283,14 @@ export default function ShortVideoCard({ post, active, onDelete }: Props) {
   const media = post.media.filter((m) => m.kind !== "avatar");
   const [mediaIndex, setMediaIndex] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // View-count hook: when this card is the active one, record a view after the
+  // user dwells on it for ≥1s (skips fast scrolls). Fire-and-forget.
+  useEffect(() => {
+    if (!active) return;
+    const t = setTimeout(() => recordView(post.id), 1000);
+    return () => clearTimeout(t);
+  }, [active, post.id]);
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current;

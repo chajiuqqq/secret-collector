@@ -20,6 +20,8 @@ func SetupRouter(h *Handler, cfg *config.Config) *gin.Engine {
 		api.POST("/posts", h.CreatePost)
 		api.GET("/posts", h.ListPosts)
 		api.DELETE("/posts/:id", h.DeletePost)
+		api.GET("/posts/random", h.RandomPosts)
+		api.POST("/posts/:id/view", h.RecordView)
 		api.POST("/tg/scan", h.TgScan)
 		api.GET("/tg/scan/progress", h.TgScanProgress)
 		api.POST("/capture", h.Capture)

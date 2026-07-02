@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PostItem } from "@/lib/types";
-import { fetchPosts, deletePost } from "@/lib/api";
+import { fetchPosts, fetchRandomPosts, deletePost } from "@/lib/api";
 import PostCard from "./post-card";
 import MediaLightbox from "./media-lightbox";
 import TagBar from "./tag-bar";
@@ -19,6 +19,9 @@ export default function PostFeed({
 }) {
   const [posts, setPosts] = useState(initialPosts);
   const cursorRef = useRef<string | null>(initialCursor);
+  // excludeRef: post ids already shown in the current short-video cycle (dedup
+  // for the weighted-random endpoint). Reset on tag/mode change or pool exhaust.
+  const excludeRef = useRef<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(initialCursor !== null);
   const sentinel = useRef<HTMLDivElement>(null);
@@ -30,39 +33,94 @@ export default function PostFeed({
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const activeTagRef = useRef<string | null>(null);
   const { mode } = useViewMode();
+  // Token to ignore stale fresh-load responses (rapid tag/mode switches).
+  const loadTokenRef = useRef(0);
 
-  const handleTagChange = useCallback((tag: string | null) => {
-    setActiveTag(tag);
-    activeTagRef.current = tag;
-    // Fetch fresh with tag filter from backend
-    const load = async () => {
-      setLoading(true);
-      try {
-        const data = await fetchPosts(20, undefined, tag ?? undefined);
-        if (tag === activeTagRef.current) {
-          setPosts(data.posts);
-          cursorRef.current = data.next_cursor;
-          setHasMore(data.next_cursor !== null);
+  // Fresh load (page 1) for the current mode + tag. Replaces posts entirely.
+  const loadFresh = useCallback(async (tag: string | null, m: "waterfall" | "short") => {
+    const token = ++loadTokenRef.current;
+    setLoading(true);
+    try {
+      if (m === "short") {
+        const data = await fetchRandomPosts(20, tag ?? undefined, []);
+        if (token !== loadTokenRef.current) return;
+        setPosts(data.posts);
+        if (data.next_cursor) {
+          excludeRef.current = new Set(data.posts.map((p) => p.id));
+          setHasMore(true);
+        } else if (data.posts.length > 0) {
+          // Pool smaller than one batch: exhausted immediately → allow reshuffle.
+          excludeRef.current = new Set();
+          setHasMore(true);
+        } else {
+          excludeRef.current = new Set();
+          setHasMore(false);
         }
-      } finally {
-        setLoading(false);
+        cursorRef.current = null;
+      } else {
+        const data = await fetchPosts(20, undefined, tag ?? undefined);
+        if (token !== loadTokenRef.current) return;
+        setPosts(data.posts);
+        cursorRef.current = data.next_cursor;
+        excludeRef.current = new Set();
+        setHasMore(data.next_cursor !== null);
       }
-    };
-    load();
+    } finally {
+      if (token === loadTokenRef.current) setLoading(false);
+    }
   }, []);
+
+  const handleTagChange = useCallback(
+    (tag: string | null) => {
+      setActiveTag(tag);
+      activeTagRef.current = tag;
+      excludeRef.current = new Set();
+      cursorRef.current = null;
+      loadFresh(tag, mode);
+    },
+    [loadFresh, mode],
+  );
+
+  // On mode change (and initial mount): reload page 1 in the correct ordering.
+  useEffect(() => {
+    loadFresh(activeTagRef.current, mode);
+  }, [mode, loadFresh]);
 
   const loadMore = useCallback(async () => {
     if (loading || !hasMore) return;
     setLoading(true);
     try {
-      const data = await fetchPosts(20, cursorRef.current ?? undefined, activeTagRef.current ?? undefined);
-      setPosts((p) => [...p, ...data.posts]);
-      cursorRef.current = data.next_cursor;
-      if (!data.next_cursor) setHasMore(false);
+      if (mode === "short") {
+        const data = await fetchRandomPosts(
+          20,
+          activeTagRef.current ?? undefined,
+          [...excludeRef.current],
+        );
+        setPosts((p) => [...p, ...data.posts]);
+        for (const p of data.posts) excludeRef.current.add(p.id);
+        if (data.next_cursor) {
+          setHasMore(true);
+        } else if (excludeRef.current.size > 0) {
+          // Cycle exhausted → reset exclude so next load reshuffles.
+          excludeRef.current = new Set();
+          setHasMore(true);
+        } else {
+          setHasMore(false);
+        }
+      } else {
+        const data = await fetchPosts(
+          20,
+          cursorRef.current ?? undefined,
+          activeTagRef.current ?? undefined,
+        );
+        setPosts((p) => [...p, ...data.posts]);
+        cursorRef.current = data.next_cursor;
+        if (!data.next_cursor) setHasMore(false);
+      }
     } finally {
       setLoading(false);
     }
-  }, [loading, hasMore]);
+  }, [loading, hasMore, mode]);
 
   useEffect(() => {
     if (mode !== "waterfall") return;
@@ -80,6 +138,7 @@ export default function PostFeed({
 
   const handleDelete = useCallback((id: number) => {
     setPosts((p) => p.filter((post) => post.id !== id));
+    excludeRef.current.delete(id);
     deletePost(id).catch(() => {});
   }, []);
 

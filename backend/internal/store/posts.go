@@ -113,6 +113,7 @@ type Post struct {
 	Blurred         bool
 	PostedAt        *time.Time
 	CapturedAt      time.Time
+	ViewCount       int64
 	Media           []MediaItem
 }
 
@@ -139,6 +140,58 @@ func DecodeCursor(cursor string) (time.Time, int64, error) {
 }
 
 
+// applyTagFilter appends the tag predicate to the query and the tag arg,
+// advancing the placeholder counter n. Returns the new n.
+func applyTagFilter(query *string, args *[]any, n int, tag string) int {
+	if tag == "" {
+		return n
+	}
+	n++
+	if tag == "x" || tag == "xiaohongshu" || tag == "tg" {
+		*query += fmt.Sprintf(` AND platform = $%d`, n)
+	} else {
+		*query += fmt.Sprintf(` AND content LIKE '%%' || $%d || '%%'`, n)
+	}
+	*args = append(*args, tag)
+	return n
+}
+
+// fetchMediaAndAssemble loads media for the given posts in one query and
+// attaches them to the matching Post by id.
+func (s *Store) fetchMediaAndAssemble(ctx context.Context, posts []Post) error {
+	if len(posts) == 0 {
+		return nil
+	}
+	postIDs := make([]int64, len(posts))
+	idx := make(map[int64]*Post, len(posts))
+	for i := range posts {
+		postIDs[i] = posts[i].ID
+		idx[posts[i].ID] = &posts[i]
+	}
+	mrows, err := s.Pool.Query(ctx, `
+		SELECT id, post_id, kind, position, original_url, status, local_path, content_type, width, height
+		FROM media WHERE post_id = ANY($1) ORDER BY post_id, position, id`, postIDs)
+	if err != nil {
+		return fmt.Errorf("query media: %w", err)
+	}
+	defer mrows.Close()
+	for mrows.Next() {
+		var m MediaItem
+		var postID int64
+		if err := mrows.Scan(&m.ID, &postID, &m.Kind, &m.Position, &m.OriginalURL,
+			&m.Status, &m.LocalPath, &m.ContentType, &m.Width, &m.Height); err != nil {
+			return fmt.Errorf("scan media: %w", err)
+		}
+		if p, ok := idx[postID]; ok {
+			p.Media = append(p.Media, m)
+		}
+	}
+	if err := mrows.Err(); err != nil {
+		return fmt.Errorf("iterate media: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) ListPosts(ctx context.Context, limit int, cursor, tag string) ([]Post, string, error) {
 	query := `
 		SELECT id, platform, original_url, author_name, author_avatar_url,
@@ -147,15 +200,7 @@ func (s *Store) ListPosts(ctx context.Context, limit int, cursor, tag string) ([
 		WHERE deleted_at IS NULL`
 	args := []any{}
 	n := 0
-	if tag != "" {
-		n++
-		if tag == "x" || tag == "xiaohongshu" || tag == "tg" {
-			query += fmt.Sprintf(` AND platform = $%d`, n)
-		} else {
-			query += fmt.Sprintf(` AND content LIKE '%%' || $%d || '%%'`, n)
-		}
-		args = append(args, tag)
-	}
+	n = applyTagFilter(&query, &args, n, tag)
 	if cursor != "" {
 		capturedAt, id, err := DecodeCursor(cursor)
 		if err != nil {
@@ -194,36 +239,75 @@ func (s *Store) ListPosts(ctx context.Context, limit int, cursor, tag string) ([
 		return posts, "", nil
 	}
 
-	postIDs := make([]int64, len(posts))
-	idx := make(map[int64]*Post, len(posts))
-	for i := range posts {
-		postIDs[i] = posts[i].ID
-		idx[posts[i].ID] = &posts[i]
-	}
-
-	mrows, err := s.Pool.Query(ctx, `
-		SELECT id, post_id, kind, position, original_url, status, local_path, content_type, width, height
-		FROM media WHERE post_id = ANY($1) ORDER BY post_id, position, id`, postIDs)
-	if err != nil {
-		return nil, "", fmt.Errorf("query media: %w", err)
-	}
-	defer mrows.Close()
-	for mrows.Next() {
-		var m MediaItem
-		var postID int64
-		if err := mrows.Scan(&m.ID, &postID, &m.Kind, &m.Position, &m.OriginalURL,
-			&m.Status, &m.LocalPath, &m.ContentType, &m.Width, &m.Height); err != nil {
-			return nil, "", fmt.Errorf("scan media: %w", err)
-		}
-		if p, ok := idx[postID]; ok {
-			p.Media = append(p.Media, m)
-		}
-	}
-	if err := mrows.Err(); err != nil {
-		return nil, "", fmt.Errorf("iterate media: %w", err)
+	if err := s.fetchMediaAndAssemble(ctx, posts); err != nil {
+		return nil, "", err
 	}
 	return posts, nextCursor, nil
 }
+
+// RandomPosts returns a weighted-random sample of posts matching the tag,
+// excluding the given ids (already shown in the current cycle). The weight is
+// 1/(view_count+1) (inverse-frequency), implemented via the exponential race:
+// ORDER BY (-ln(random()) * (view_count+1)) ASC picks items proportional to
+// their weight, favouring less-viewed posts to improve overall exposure.
+// hasMore is true when the matching pool (minus exclude) still has rows after
+// this batch (detected via the LIMIT limit+1 trick).
+func (s *Store) RandomPosts(ctx context.Context, limit int, tag string, exclude []int64) ([]Post, bool, error) {
+	query := `
+		SELECT id, platform, original_url, author_name, author_avatar_url,
+		       avatar_media_id, content, blurred, posted_at, captured_at, view_count
+		FROM posts
+		WHERE deleted_at IS NULL`
+	args := []any{}
+	n := 0
+	n = applyTagFilter(&query, &args, n, tag)
+	if len(exclude) > 0 {
+		n++
+		query += fmt.Sprintf(` AND id <> ALL($%d)`, n)
+		args = append(args, exclude)
+	}
+	n++
+	query += fmt.Sprintf(` ORDER BY (-ln(random() + 1e-9) * (view_count + 1)) ASC, id ASC LIMIT $%d`, n)
+	args = append(args, limit+1)
+
+	rows, err := s.Pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, false, fmt.Errorf("query random posts: %w", err)
+	}
+	posts, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Post, error) {
+		var p Post
+		err := row.Scan(&p.ID, &p.Platform, &p.OriginalURL, &p.AuthorName, &p.AuthorAvatarURL,
+			&p.AvatarMediaID, &p.Content, &p.Blurred, &p.PostedAt, &p.CapturedAt, &p.ViewCount)
+		return p, err
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("scan random posts: %w", err)
+	}
+
+	hasMore := len(posts) > limit
+	if hasMore {
+		posts = posts[:limit]
+	}
+	if len(posts) == 0 {
+		return posts, false, nil
+	}
+	if err := s.fetchMediaAndAssemble(ctx, posts); err != nil {
+		return nil, false, err
+	}
+	return posts, hasMore, nil
+}
+
+// IncrementPostView bumps view_count for a post. Used by the short-video feed
+// to record exposure so the weighted-random ordering can favour unseen posts.
+func (s *Store) IncrementPostView(ctx context.Context, id int64) error {
+	_, err := s.Pool.Exec(ctx,
+		`UPDATE posts SET view_count = view_count + 1 WHERE id = $1 AND deleted_at IS NULL`, id)
+	if err != nil {
+		return fmt.Errorf("increment view: %w", err)
+	}
+	return nil
+}
+
 
 func (s *Store) SoftDeletePost(ctx context.Context, id int64) (bool, string, string, error) {
 	var platform, content string

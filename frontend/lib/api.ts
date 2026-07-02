@@ -35,6 +35,30 @@ export async function fetchPosts(
   return res.json();
 }
 
+// Weighted-random feed for short-video mode. `exclude` is the set of post ids
+// already shown in the current cycle (dedup). next_cursor is a has_more flag.
+export async function fetchRandomPosts(
+  limit = 20,
+  tag?: string,
+  exclude?: number[],
+): Promise<ListPostsResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (tag) params.set("tag", tag);
+  if (exclude && exclude.length > 0) {
+    params.set("exclude", exclude.join(","));
+  }
+  const res = await fetch(apiPath(`/api/posts/random?${params}`), {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+// Record a view on a post (short-video exposure hook). Fire-and-forget.
+export function recordView(id: number): void {
+  fetch(apiPath(`/api/posts/${id}/view`), { method: "POST" }).catch(() => {});
+}
+
 export async function deletePost(id: number): Promise<void> {
   const res = await fetch(apiPath(`/api/posts/${id}`), {
     method: "DELETE",

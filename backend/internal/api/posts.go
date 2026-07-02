@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"capture/backend/internal/store"
 
@@ -13,11 +14,66 @@ import (
 
 const defaultLimit = 20
 
+const maxExclude = 1000
+
 type Handler struct {
 	Store        *store.Store
 	MediaRoot    string
 	Enqueue      func(ids []int64)
 	CaptureQueue *Queue
+}
+
+// mapPostsToResponse converts store posts to API responses, rewriting media
+// local paths and avatar URLs to /media/<path>. Shared by ListPosts and
+// RandomPosts.
+func mapPostsToResponse(posts []store.Post) []PostResponse {
+	out := make([]PostResponse, len(posts))
+	for pi, p := range posts {
+		media := make([]MediaResponse, 0, len(p.Media))
+		for _, m := range p.Media {
+			if m.Kind == "avatar" {
+				continue
+			}
+			mr := MediaResponse{
+				ID:          m.ID,
+				Kind:        m.Kind,
+				Position:    m.Position,
+				OriginalURL: m.OriginalURL,
+				Status:      m.Status,
+				ContentType: m.ContentType,
+				Width:       m.Width,
+				Height:      m.Height,
+			}
+			if m.LocalPath != nil {
+				up := "/media/" + *m.LocalPath
+				mr.URL = &up
+			} else if m.Status == "pending" || m.Status == "downloading" {
+				mr.URL = &m.OriginalURL
+			}
+			media = append(media, mr)
+		}
+		avatarURL := p.AuthorAvatarURL
+		for _, m := range p.Media {
+			if m.Kind == "avatar" && m.LocalPath != nil {
+				up := "/media/" + *m.LocalPath
+				avatarURL = &up
+				break
+			}
+		}
+		out[pi] = PostResponse{
+			ID:              p.ID,
+			Platform:        p.Platform,
+			OriginalURL:     p.OriginalURL,
+			AuthorName:      p.AuthorName,
+			AuthorAvatarURL: avatarURL,
+			Content:         p.Content,
+			PostedAt:        p.PostedAt,
+			Blurred:         p.Blurred,
+			CapturedAt:      p.CapturedAt,
+			Media:           media,
+		}
+	}
+	return out
 }
 
 func (h *Handler) CreatePost(c *gin.Context) {
@@ -84,58 +140,77 @@ func (h *Handler) ListPosts(c *gin.Context) {
 		return
 	}
 
-	out := make([]PostResponse, len(posts))
-	for pi, p := range posts {
-		media := make([]MediaResponse, 0, len(p.Media))
-		for _, m := range p.Media {
-			if m.Kind == "avatar" {
-				continue
-			}
-			mr := MediaResponse{
-				ID:          m.ID,
-				Kind:        m.Kind,
-				Position:    m.Position,
-				OriginalURL: m.OriginalURL,
-				Status:      m.Status,
-				ContentType: m.ContentType,
-				Width:       m.Width,
-				Height:      m.Height,
-			}
-			if m.LocalPath != nil {
-				up := "/media/" + *m.LocalPath
-				mr.URL = &up
-			} else if m.Status == "pending" || m.Status == "downloading" {
-				mr.URL = &m.OriginalURL
-			}
-			media = append(media, mr)
-		}
-		avatarURL := p.AuthorAvatarURL
-		for _, m := range p.Media {
-			if m.Kind == "avatar" && m.LocalPath != nil {
-				up := "/media/" + *m.LocalPath
-				avatarURL = &up
-				break
-			}
-		}
-		out[pi] = PostResponse{
-			ID:              p.ID,
-			Platform:        p.Platform,
-			OriginalURL:     p.OriginalURL,
-			AuthorName:      p.AuthorName,
-			AuthorAvatarURL: avatarURL,
-			Content:         p.Content,
-			PostedAt:        p.PostedAt,
-			Blurred:         p.Blurred,
-			CapturedAt:      p.CapturedAt,
-			Media:           media,
-		}
-	}
-
-	resp := ListPostsResponse{Posts: out}
+	resp := ListPostsResponse{Posts: mapPostsToResponse(posts)}
 	if nextCursor != "" {
 		resp.NextCursor = &nextCursor
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+// RandomPosts returns a weighted-random sample (inverse-frequency by view_count)
+// from the matching pool, excluding already-shown ids. Used by short-video mode.
+func (h *Handler) RandomPosts(c *gin.Context) {
+	var q struct {
+		Limit   int    `form:"limit"`
+		Tag     string `form:"tag"`
+		Exclude string `form:"exclude"`
+	}
+	if err := c.ShouldBindQuery(&q); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if q.Limit <= 0 || q.Limit > 100 {
+		q.Limit = defaultLimit
+	}
+
+	var exclude []int64
+	if strings.TrimSpace(q.Exclude) != "" {
+		for _, part := range strings.Split(q.Exclude, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			id, err := strconv.ParseInt(part, 10, 64)
+			if err != nil {
+				continue
+			}
+			exclude = append(exclude, id)
+			if len(exclude) >= maxExclude {
+				break
+			}
+		}
+	}
+
+	posts, hasMore, err := h.Store.RandomPosts(c.Request.Context(), q.Limit, q.Tag, exclude)
+	if err != nil {
+		slog.Error("random posts", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to random posts"})
+		return
+	}
+
+	resp := ListPostsResponse{Posts: mapPostsToResponse(posts)}
+	// next_cursor is reused as a has_more flag for the random endpoint (no
+	// real cursor): non-null means more posts remain in the pool this cycle.
+	if hasMore {
+		more := "1"
+		resp.NextCursor = &more
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// RecordView bumps view_count for a post (short-video exposure hook).
+func (h *Handler) RecordView(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	if err := h.Store.IncrementPostView(c.Request.Context(), id); err != nil {
+		slog.Error("record view", "id", id, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (h *Handler) DeletePost(c *gin.Context) {
